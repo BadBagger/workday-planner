@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 24
-        versionName = "2.4-ui-polish"
+        versionCode = 25
+        versionName = "2.5-logo-refresh"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
