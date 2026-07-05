@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Workday Planner</string>
+    <string name="widget_description">Upcoming shift and open tasks</string>
+    <string name="schedule_widget_description">Weekly work schedule</string>
+</resources>

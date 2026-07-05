@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/schedule_widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F7F9FC"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/schedule_widget_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Work Schedule"
+        android:textColor="#1B1F24"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/schedule_row_1"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_2"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_3"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_4"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_5"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_6"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_7"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_8"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_9"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_10"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_11"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_12"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_13"
+        style="@style/WidgetScheduleRow" />
+
+    <TextView
+        android:id="@+id/schedule_row_14"
+        style="@style/WidgetScheduleRow" />
+</LinearLayout>

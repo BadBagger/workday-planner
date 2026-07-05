@@ -1,0 +1,209 @@
+package com.example.workdayplanner.data
+
+import android.content.Context
+import com.example.workdayplanner.widget.PlannerWidgetUpdater
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONArray
+import org.json.JSONObject
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+
+class PlannerRepository(context: Context) {
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences("planner", Context.MODE_PRIVATE)
+    private val mutableState = MutableStateFlow(loadState())
+    val state: StateFlow<AppState> = mutableState
+
+    fun upsertTask(task: TaskItem) = update { state ->
+        state.copy(tasks = state.tasks.filterNot { it.id == task.id } + task)
+    }
+
+    fun deleteTask(taskId: String) = update { state ->
+        state.copy(tasks = state.tasks.filterNot { it.id == taskId })
+    }
+
+    fun upsertEvent(event: WorkEvent) = update { state ->
+        state.copy(events = state.events.filterNot { it.id == event.id } + event)
+    }
+
+    fun deleteEvent(eventId: String) = update { state ->
+        state.copy(events = state.events.filterNot { it.id == eventId })
+    }
+
+    fun toggleComplete(taskId: String) = update { state ->
+        state.copy(tasks = state.tasks.map { task ->
+            if (task.id == taskId) task.copy(completed = !task.completed) else task
+        })
+    }
+
+    fun mergeSchedule(parsed: ParsedSchedule) = update { state ->
+        state.copy(
+            shifts = (state.shifts + parsed.shifts).distinctBy { "${it.date}-${it.start}-${it.end}" }
+                .sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start }),
+            daysOff = state.daysOff + parsed.daysOff
+        )
+    }
+
+    fun importSchedule(parsed: ParsedSchedule) = update { state ->
+        mergeImportedSchedule(state, parsed)
+    }
+
+    fun replaceSchedule(parsed: ParsedSchedule) = update { state ->
+        state.copy(
+            shifts = parsed.shifts
+                .distinctBy { "${it.date}-${it.start}-${it.end}" }
+                .sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start }),
+            daysOff = parsed.daysOff
+        )
+    }
+
+    fun addDayOff(date: LocalDate) = update { state ->
+        state.copy(daysOff = state.daysOff + date)
+    }
+
+    fun removeDayOff(date: LocalDate) = update { state ->
+        state.copy(daysOff = state.daysOff - date)
+    }
+
+    fun clearSchedule() = update { state ->
+        state.copy(shifts = emptyList(), daysOff = emptySet())
+    }
+
+    fun setDefaultDayOff(day: DayOfWeek, isOff: Boolean) = update { state ->
+        state.copy(defaultDaysOff = if (isOff) state.defaultDaysOff + day else state.defaultDaysOff - day)
+    }
+
+    fun setDarkMode(enabled: Boolean) = update { state ->
+        state.copy(darkMode = enabled)
+    }
+
+    fun setAccentStyle(style: AccentStyle) = update { state ->
+        state.copy(accentStyle = style)
+    }
+
+    fun setSelectedCalendar(calendarId: Long?) = update { state ->
+        state.copy(selectedCalendarId = calendarId)
+    }
+
+    private fun update(block: (AppState) -> AppState) {
+        val next = block(mutableState.value)
+        mutableState.value = next
+        saveState(next)
+        PlannerWidgetUpdater.updateAll(appContext)
+    }
+
+    private fun loadState(): AppState {
+        val root = prefs.getString("state", null)?.let(::JSONObject) ?: return AppState()
+        return AppState(
+            tasks = root.optJSONArray("tasks").toObjects(::taskFromJson),
+            events = root.optJSONArray("events").toObjects(::eventFromJson),
+            shifts = root.optJSONArray("shifts").toObjects(::shiftFromJson),
+            daysOff = root.optJSONArray("daysOff").toStrings().map(LocalDate::parse).toSet(),
+            defaultDaysOff = root.optJSONArray("defaultDaysOff").toStrings().map(DayOfWeek::valueOf).toSet(),
+            darkMode = root.optBoolean("darkMode", false),
+            accentStyle = runCatching {
+                AccentStyle.valueOf(root.optString("accentStyle", AccentStyle.Classic.name))
+            }.getOrDefault(AccentStyle.Classic),
+            selectedCalendarId = if (root.has("selectedCalendarId") && !root.isNull("selectedCalendarId")) {
+                root.optLong("selectedCalendarId")
+            } else {
+                null
+            }
+        )
+    }
+
+    private fun saveState(state: AppState) {
+        val root = JSONObject()
+            .put("tasks", JSONArray(state.tasks.map(::taskToJson)))
+            .put("events", JSONArray(state.events.map(::eventToJson)))
+            .put("shifts", JSONArray(state.shifts.map(::shiftToJson)))
+            .put("daysOff", JSONArray(state.daysOff.map(LocalDate::toString)))
+            .put("defaultDaysOff", JSONArray(state.defaultDaysOff.map(DayOfWeek::name)))
+            .put("darkMode", state.darkMode)
+            .put("accentStyle", state.accentStyle.name)
+            .put("selectedCalendarId", state.selectedCalendarId)
+        prefs.edit().putString("state", root.toString()).apply()
+    }
+
+    private fun taskToJson(task: TaskItem) = JSONObject()
+        .put("id", task.id)
+        .put("title", task.title)
+        .put("notes", task.notes)
+        .put("deadline", task.deadline?.toString())
+        .put("alarmAt", task.alarmAt?.toString())
+        .put("repeatRule", task.repeatRule.name)
+        .put("repeatDays", JSONArray(task.repeatDays.map(DayOfWeek::name)))
+        .put("skipDaysOff", task.skipDaysOff)
+        .put("completed", task.completed)
+
+    private fun taskFromJson(json: JSONObject) = TaskItem(
+        id = json.getString("id"),
+        title = json.getString("title"),
+        notes = json.optString("notes"),
+        deadline = json.optString("deadline").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
+        alarmAt = json.optString("alarmAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
+        repeatRule = runCatching { RepeatRule.valueOf(json.optString("repeatRule")) }.getOrDefault(RepeatRule.None),
+        repeatDays = json.optJSONArray("repeatDays").toStrings().mapNotNull { value ->
+            runCatching { DayOfWeek.valueOf(value) }.getOrNull()
+        }.toSet(),
+        skipDaysOff = json.optBoolean("skipDaysOff", true),
+        completed = json.optBoolean("completed")
+    )
+
+    private fun eventToJson(event: WorkEvent) = JSONObject()
+        .put("id", event.id)
+        .put("title", event.title)
+        .put("notes", event.notes)
+        .put("startsAt", event.startsAt.toString())
+        .put("endsAt", event.endsAt.toString())
+        .put("location", event.location)
+
+    private fun eventFromJson(json: JSONObject) = WorkEvent(
+        id = json.getString("id"),
+        title = json.getString("title"),
+        notes = json.optString("notes"),
+        startsAt = LocalDateTime.parse(json.getString("startsAt")),
+        endsAt = LocalDateTime.parse(json.getString("endsAt")),
+        location = json.optString("location")
+    )
+
+    private fun shiftToJson(shift: WorkShift) = JSONObject()
+        .put("id", shift.id)
+        .put("date", shift.date.toString())
+        .put("start", shift.start.toString())
+        .put("end", shift.end.toString())
+        .put("label", shift.label)
+
+    private fun shiftFromJson(json: JSONObject) = WorkShift(
+        id = json.getString("id"),
+        date = LocalDate.parse(json.getString("date")),
+        start = LocalTime.parse(json.getString("start")),
+        end = LocalTime.parse(json.getString("end")),
+        label = json.optString("label", "Work")
+    )
+}
+
+private fun JSONArray?.toStrings(): List<String> {
+    if (this == null) return emptyList()
+    return List(length()) { index -> getString(index) }
+}
+
+private fun <T> JSONArray?.toObjects(mapper: (JSONObject) -> T): List<T> {
+    if (this == null) return emptyList()
+    return List(length()) { index -> mapper(getJSONObject(index)) }
+}
+
+fun mergeImportedSchedule(state: AppState, parsed: ParsedSchedule): AppState {
+    val importedDates = parsed.shifts.map { it.date }.toSet() + parsed.daysOff
+    if (importedDates.isEmpty()) return state
+
+    return state.copy(
+        shifts = (state.shifts.filterNot { it.date in importedDates } + parsed.shifts)
+            .distinctBy { "${it.date}-${it.start}-${it.end}" }
+            .sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start }),
+        daysOff = (state.daysOff - importedDates) + parsed.daysOff
+    )
+}

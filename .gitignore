@@ -1,0 +1,13 @@
+.gradle/
+.android-sdk/
+.local-jdk/
+.kotlin/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+release-keystore.jks
+*.apk
+*.aab
+.codex-remote-attachments/

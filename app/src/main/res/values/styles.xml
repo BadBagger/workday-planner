@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.WorkdayPlanner" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+        <item name="android:statusBarColor">#FFFFFF</item>
+    </style>
+
+    <style name="WidgetScheduleRow">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">32dp</item>
+        <item name="android:layout_marginTop">5dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:textColor">#1B1F24</item>
+        <item name="android:textSize">15sp</item>
+    </style>
+</resources>
