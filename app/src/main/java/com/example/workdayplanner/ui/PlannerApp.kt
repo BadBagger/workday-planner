@@ -355,6 +355,7 @@ private fun TaskListScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CommandCenterCard(state: AppState) {
     val today = LocalDate.now()
@@ -387,7 +388,11 @@ private fun CommandCenterCard(state: AppState) {
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 style = MaterialTheme.typography.bodyLarge
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 AssistChip(onClick = {}, label = { Text("$openTasks open tasks") })
                 AssistChip(onClick = {}, label = { Text("$upcomingEvents upcoming events") })
                 AssistChip(onClick = {}, label = { Text("$todayNotes notes today") })
