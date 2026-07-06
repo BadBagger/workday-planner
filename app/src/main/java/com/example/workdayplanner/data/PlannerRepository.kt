@@ -25,6 +25,14 @@ class PlannerRepository(context: Context) {
         state.copy(tasks = state.tasks.filterNot { it.id == taskId })
     }
 
+    fun addNote(note: WorkNote) = update { state ->
+        state.copy(notes = (state.notes + note).sortedWith(compareByDescending<WorkNote> { it.date }.thenByDescending { it.createdAt }))
+    }
+
+    fun deleteNote(noteId: String) = update { state ->
+        state.copy(notes = state.notes.filterNot { it.id == noteId })
+    }
+
     fun upsertEvent(event: WorkEvent) = update { state ->
         state.copy(events = state.events.filterNot { it.id == event.id } + event)
     }
@@ -84,6 +92,10 @@ class PlannerRepository(context: Context) {
         state.copy(accentStyle = style)
     }
 
+    fun setWidgetLayoutMode(mode: WidgetLayoutMode) = update { state ->
+        state.copy(widgetLayoutMode = mode)
+    }
+
     fun setSelectedCalendar(calendarId: Long?) = update { state ->
         state.copy(selectedCalendarId = calendarId)
     }
@@ -99,6 +111,7 @@ class PlannerRepository(context: Context) {
         val root = prefs.getString("state", null)?.let(::JSONObject) ?: return AppState()
         return AppState(
             tasks = root.optJSONArray("tasks").toObjects(::taskFromJson),
+            notes = root.optJSONArray("notes").toObjects(::noteFromJson),
             events = root.optJSONArray("events").toObjects(::eventFromJson),
             shifts = root.optJSONArray("shifts").toObjects(::shiftFromJson),
             daysOff = root.optJSONArray("daysOff").toStrings().map(LocalDate::parse).toSet(),
@@ -107,6 +120,9 @@ class PlannerRepository(context: Context) {
             accentStyle = runCatching {
                 AccentStyle.valueOf(root.optString("accentStyle", AccentStyle.Classic.name))
             }.getOrDefault(AccentStyle.Classic),
+            widgetLayoutMode = runCatching {
+                WidgetLayoutMode.valueOf(root.optString("widgetLayoutMode", WidgetLayoutMode.Standard.name))
+            }.getOrDefault(WidgetLayoutMode.Standard),
             selectedCalendarId = if (root.has("selectedCalendarId") && !root.isNull("selectedCalendarId")) {
                 root.optLong("selectedCalendarId")
             } else {
@@ -118,12 +134,14 @@ class PlannerRepository(context: Context) {
     private fun saveState(state: AppState) {
         val root = JSONObject()
             .put("tasks", JSONArray(state.tasks.map(::taskToJson)))
+            .put("notes", JSONArray(state.notes.map(::noteToJson)))
             .put("events", JSONArray(state.events.map(::eventToJson)))
             .put("shifts", JSONArray(state.shifts.map(::shiftToJson)))
             .put("daysOff", JSONArray(state.daysOff.map(LocalDate::toString)))
             .put("defaultDaysOff", JSONArray(state.defaultDaysOff.map(DayOfWeek::name)))
             .put("darkMode", state.darkMode)
             .put("accentStyle", state.accentStyle.name)
+            .put("widgetLayoutMode", state.widgetLayoutMode.name)
             .put("selectedCalendarId", state.selectedCalendarId)
         prefs.edit().putString("state", root.toString()).apply()
     }
@@ -132,6 +150,7 @@ class PlannerRepository(context: Context) {
         .put("id", task.id)
         .put("title", task.title)
         .put("notes", task.notes)
+        .put("category", task.category.name)
         .put("deadline", task.deadline?.toString())
         .put("alarmAt", task.alarmAt?.toString())
         .put("repeatRule", task.repeatRule.name)
@@ -143,6 +162,9 @@ class PlannerRepository(context: Context) {
         id = json.getString("id"),
         title = json.getString("title"),
         notes = json.optString("notes"),
+        category = runCatching {
+            TaskCategory.valueOf(json.optString("category", TaskCategory.General.name))
+        }.getOrDefault(TaskCategory.General),
         deadline = json.optString("deadline").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
         alarmAt = json.optString("alarmAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
         repeatRule = runCatching { RepeatRule.valueOf(json.optString("repeatRule")) }.getOrDefault(RepeatRule.None),
@@ -151,6 +173,26 @@ class PlannerRepository(context: Context) {
         }.toSet(),
         skipDaysOff = json.optBoolean("skipDaysOff", true),
         completed = json.optBoolean("completed")
+    )
+
+    private fun noteToJson(note: WorkNote) = JSONObject()
+        .put("id", note.id)
+        .put("date", note.date.toString())
+        .put("text", note.text)
+        .put("kind", note.kind.name)
+        .put("tags", JSONArray(note.tags))
+        .put("createdAt", note.createdAt.toString())
+
+    private fun noteFromJson(json: JSONObject) = WorkNote(
+        id = json.getString("id"),
+        date = LocalDate.parse(json.getString("date")),
+        text = json.getString("text"),
+        kind = runCatching {
+            WorkNoteKind.valueOf(json.optString("kind", WorkNoteKind.General.name))
+        }.getOrDefault(WorkNoteKind.General),
+        tags = json.optJSONArray("tags").toStrings(),
+        createdAt = json.optString("createdAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse)
+            ?: LocalDateTime.now()
     )
 
     private fun eventToJson(event: WorkEvent) = JSONObject()

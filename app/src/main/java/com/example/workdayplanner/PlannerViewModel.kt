@@ -14,7 +14,10 @@ import com.example.workdayplanner.data.PlannerRepository
 import com.example.workdayplanner.data.ScheduleTextParser
 import com.example.workdayplanner.data.TaskItem
 import com.example.workdayplanner.data.TaskRecurrence
+import com.example.workdayplanner.data.TaskCategory
+import com.example.workdayplanner.data.WorkNoteOrganizer
 import com.example.workdayplanner.data.WorkEvent
+import com.example.workdayplanner.data.WidgetLayoutMode
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
@@ -25,6 +28,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.time.LocalDate
+import java.time.LocalDateTime
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -52,6 +56,27 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         alarmScheduler.cancel(taskId)
     }
 
+    fun addWorkNote(text: String) {
+        if (text.isBlank()) return
+        repository.addNote(WorkNoteOrganizer.create(text))
+    }
+
+    fun deleteWorkNote(noteId: String) {
+        repository.deleteNote(noteId)
+    }
+
+    fun createTaskFromNote(noteId: String) {
+        val note = state.value.notes.firstOrNull { it.id == noteId } ?: return
+        val task = TaskItem(
+            title = note.text.lineSequence().firstOrNull()?.take(60)?.ifBlank { "Follow up note" } ?: "Follow up note",
+            notes = note.text,
+            category = TaskCategory.Admin,
+            deadline = LocalDateTime.now().plusDays(1).withHour(9).withMinute(0),
+            alarmAt = LocalDateTime.now().plusDays(1).withHour(8).withMinute(30)
+        )
+        saveTask(task)
+    }
+
     fun saveEvent(event: WorkEvent) {
         repository.upsertEvent(event)
     }
@@ -64,7 +89,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         val task = state.value.tasks.firstOrNull { it.id == taskId } ?: return
         repository.toggleComplete(taskId)
         if (!task.completed) {
+            alarmScheduler.cancel(taskId)
             TaskRecurrence.nextOccurrence(task, state.value)?.let(::saveTask)
+        } else {
+            alarmScheduler.schedule(task.copy(completed = false))
         }
     }
 
@@ -86,6 +114,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun setAccentStyle(style: AccentStyle) {
         repository.setAccentStyle(style)
+    }
+
+    fun setWidgetLayoutMode(mode: WidgetLayoutMode) {
+        repository.setWidgetLayoutMode(mode)
     }
 
     fun loadCalendars() {

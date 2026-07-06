@@ -11,6 +11,7 @@ class AlarmScheduler(private val context: Context) {
     private val alarmManager = context.getSystemService(AlarmManager::class.java)
 
     fun schedule(task: TaskItem) {
+        if (task.completed) return
         val alarmAt = task.alarmAt ?: task.deadline ?: return
         val triggerAtMillis = alarmAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         if (triggerAtMillis <= System.currentTimeMillis()) return

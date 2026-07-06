@@ -16,6 +16,7 @@ import com.example.workdayplanner.R
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -144,6 +145,9 @@ private fun buildViews(context: Context): RemoteViews {
     views.setTextColor(R.id.widget_task_1, palette.body)
     views.setTextColor(R.id.widget_task_2, palette.body)
     views.setTextColor(R.id.widget_task_3, palette.body)
+    views.setTextColor(R.id.widget_task_box_1, palette.accent)
+    views.setTextColor(R.id.widget_task_box_2, palette.accent)
+    views.setTextColor(R.id.widget_task_box_3, palette.accent)
 
     val nextShift = state.shifts
         .filter { !it.date.isBefore(LocalDate.now()) }
@@ -154,12 +158,52 @@ private fun buildViews(context: Context): RemoteViews {
             ?: "No upcoming shift"
     )
 
-    val tasks = state.tasks.filterNot { it.completed }.take(3)
-    val taskLines = tasks.ifEmpty { listOf(WidgetTask("", "No open tasks", false)) }
-    views.setTextViewText(R.id.widget_task_1, taskLines.getOrNull(0)?.toWidgetText().orEmpty())
-    views.setTextViewText(R.id.widget_task_2, taskLines.getOrNull(1)?.toWidgetText().orEmpty())
-    views.setTextViewText(R.id.widget_task_3, taskLines.getOrNull(2)?.toWidgetText().orEmpty())
-    listOf(R.id.widget_task_1, R.id.widget_task_2, R.id.widget_task_3).forEachIndexed { index, viewId ->
+    val taskLimit = when (state.widgetLayoutMode) {
+        WidgetLayoutMode.Compact -> 1
+        WidgetLayoutMode.Standard -> 3
+        WidgetLayoutMode.Detailed -> 2
+    }
+    val tasks = state.tasks.filterNot { it.completed }.take(taskLimit)
+    val latestNote = state.notes.maxByOrNull { it.createdAt }
+    val rows = listOf(
+        TaskRow(R.id.widget_task_row_1, R.id.widget_task_box_1, R.id.widget_task_1),
+        TaskRow(R.id.widget_task_row_2, R.id.widget_task_box_2, R.id.widget_task_2),
+        TaskRow(R.id.widget_task_row_3, R.id.widget_task_box_3, R.id.widget_task_3)
+    )
+    if (tasks.isEmpty() && (state.widgetLayoutMode != WidgetLayoutMode.Detailed || latestNote == null)) {
+        val firstRow = rows.first()
+        views.setViewVisibility(firstRow.containerId, View.VISIBLE)
+        views.setTextViewText(firstRow.boxId, "\u2713")
+        views.setTextViewText(firstRow.titleId, "All tasks clear")
+        views.setTextColor(firstRow.boxId, palette.success)
+        views.setOnClickPendingIntent(firstRow.containerId, launchPendingIntent)
+        views.setOnClickPendingIntent(firstRow.boxId, launchPendingIntent)
+        views.setOnClickPendingIntent(firstRow.titleId, launchPendingIntent)
+        rows.drop(1).forEach { row ->
+            views.setViewVisibility(row.containerId, View.GONE)
+        }
+    } else {
+        rows.forEachIndexed { index, row ->
+            val task = tasks.getOrNull(index)
+            if (task == null && state.widgetLayoutMode == WidgetLayoutMode.Detailed && index == 2 && latestNote != null) {
+                views.setViewVisibility(row.containerId, View.VISIBLE)
+                views.setTextViewText(row.boxId, "\u2022")
+                views.setTextColor(row.boxId, palette.accent)
+                views.setTextViewText(row.titleId, latestNote.toWidgetText())
+                views.setOnClickPendingIntent(row.containerId, launchPendingIntent)
+                views.setOnClickPendingIntent(row.boxId, launchPendingIntent)
+                views.setOnClickPendingIntent(row.titleId, launchPendingIntent)
+            } else if (task == null) {
+                views.setViewVisibility(row.containerId, View.GONE)
+            } else {
+                views.setViewVisibility(row.containerId, View.VISIBLE)
+                views.setTextViewText(row.boxId, "\u2610")
+                views.setTextColor(row.boxId, palette.accent)
+                views.setTextViewText(row.titleId, task.title)
+            }
+        }
+    }
+    rows.forEachIndexed { index, row ->
         tasks.getOrNull(index)?.let { task ->
             val intent = Intent(context, PlannerWidgetProvider::class.java)
                 .setAction(PlannerWidgetProvider.ACTION_TOGGLE_TASK)
@@ -170,7 +214,9 @@ private fun buildViews(context: Context): RemoteViews {
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            views.setOnClickPendingIntent(viewId, pendingIntent)
+            views.setOnClickPendingIntent(row.containerId, pendingIntent)
+            views.setOnClickPendingIntent(row.boxId, pendingIntent)
+            views.setOnClickPendingIntent(row.titleId, pendingIntent)
         }
     }
     return views
@@ -254,10 +300,6 @@ private fun firstScheduleDate(state: WidgetState): LocalDate {
         ?: today
 }
 
-private fun WidgetTask.toWidgetText(): String {
-    return if (id.isBlank()) title else "[ ] $title"
-}
-
 private object WidgetStore {
     fun load(context: Context): WidgetState {
         val root = context.getSharedPreferences("planner", Context.MODE_PRIVATE)
@@ -266,10 +308,14 @@ private object WidgetStore {
             ?: return WidgetState()
         return WidgetState(
             tasks = root.optJSONArray("tasks").toTasks(),
+            notes = root.optJSONArray("notes").toNotes(),
             shifts = root.optJSONArray("shifts").toShifts(),
             daysOff = root.optJSONArray("daysOff").toDates(),
             darkMode = root.optBoolean("darkMode", false),
-            accentStyle = root.optString("accentStyle", "Classic")
+            accentStyle = root.optString("accentStyle", "Classic"),
+            widgetLayoutMode = runCatching {
+                WidgetLayoutMode.valueOf(root.optString("widgetLayoutMode", WidgetLayoutMode.Standard.name))
+            }.getOrDefault(WidgetLayoutMode.Standard)
         )
     }
 
@@ -311,6 +357,20 @@ private object WidgetStore {
         }
     }
 
+    private fun JSONArray?.toNotes(): List<WidgetNote> {
+        if (this == null) return emptyList()
+        return List(length()) { index ->
+            val json = getJSONObject(index)
+            WidgetNote(
+                text = json.optString("text"),
+                kind = json.optString("kind", "General"),
+                createdAt = json.optString("createdAt").takeIf { it.isNotBlank() && it != "null" }
+                    ?.let(LocalDateTime::parse)
+                    ?: LocalDateTime.MIN
+            )
+        }
+    }
+
     private fun JSONArray?.toDates(): Set<LocalDate> {
         if (this == null) return emptySet()
         return List(length()) { index -> LocalDate.parse(getString(index)) }.toSet()
@@ -319,10 +379,12 @@ private object WidgetStore {
 
 private data class WidgetState(
     val tasks: List<WidgetTask> = emptyList(),
+    val notes: List<WidgetNote> = emptyList(),
     val shifts: List<WidgetShift> = emptyList(),
     val daysOff: Set<LocalDate> = emptySet(),
     val darkMode: Boolean = false,
-    val accentStyle: String = "Classic"
+    val accentStyle: String = "Classic",
+    val widgetLayoutMode: WidgetLayoutMode = WidgetLayoutMode.Standard
 )
 
 private data class WidgetTask(
@@ -337,15 +399,39 @@ private data class WidgetShift(
     val end: LocalTime
 )
 
+private data class WidgetNote(
+    val text: String,
+    val kind: String,
+    val createdAt: LocalDateTime
+)
+
+private enum class WidgetLayoutMode {
+    Compact,
+    Standard,
+    Detailed
+}
+
+private data class TaskRow(
+    val containerId: Int,
+    val boxId: Int,
+    val titleId: Int
+)
+
 private val widgetDate = DateTimeFormatter.ofPattern("EEE, MMM d")
 private val widgetShortDate = DateTimeFormatter.ofPattern("EEE M/d")
 private val widgetTime = DateTimeFormatter.ofPattern("h:mm a")
+
+private fun WidgetNote.toWidgetText(): String {
+    val firstLine = text.lineSequence().firstOrNull().orEmpty().ifBlank { "Latest note" }
+    return "$kind: ${firstLine.take(42)}"
+}
 
 private data class WidgetPalette(
     val background: Int,
     val title: Int,
     val body: Int,
-    val accent: Int
+    val accent: Int,
+    val success: Int
 ) {
     companion object {
         fun from(state: WidgetState): WidgetPalette {
@@ -359,14 +445,16 @@ private data class WidgetPalette(
                     background = 0xFF171C22.toInt(),
                     title = 0xFFF4F7FB.toInt(),
                     body = 0xFFE4E9F0.toInt(),
-                    accent = accent
+                    accent = accent,
+                    success = 0xFFA7D98B.toInt()
                 )
             } else {
                 WidgetPalette(
                     background = 0xFFF7F9FC.toInt(),
                     title = 0xFF1B1F24.toInt(),
                     body = 0xFF1B1F24.toInt(),
-                    accent = accent
+                    accent = accent,
+                    success = 0xFF4F7D2B.toInt()
                 )
             }
         }

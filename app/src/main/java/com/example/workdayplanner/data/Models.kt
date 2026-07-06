@@ -20,16 +20,52 @@ enum class AccentStyle(val label: String) {
     Sunrise("Amber")
 }
 
+enum class TaskCategory(val label: String) {
+    General("General"),
+    Orders("Orders"),
+    Cleaning("Cleaning"),
+    Prep("Prep"),
+    Admin("Admin"),
+    Personal("Personal")
+}
+
+enum class WidgetLayoutMode(val label: String) {
+    Compact("Compact"),
+    Standard("Standard"),
+    Detailed("Detailed")
+}
+
+enum class WorkNoteKind(val label: String) {
+    General("General"),
+    Order("Order"),
+    Cleaning("Cleaning"),
+    Customer("Customer"),
+    Manager("Manager"),
+    Issue("Issue"),
+    FollowUp("Follow-up"),
+    Meeting("Meeting")
+}
+
 data class TaskItem(
     val id: String = UUID.randomUUID().toString(),
     val title: String,
     val notes: String = "",
+    val category: TaskCategory = TaskCategory.General,
     val deadline: LocalDateTime? = null,
     val alarmAt: LocalDateTime? = null,
     val repeatRule: RepeatRule = RepeatRule.None,
     val repeatDays: Set<DayOfWeek> = emptySet(),
     val skipDaysOff: Boolean = true,
     val completed: Boolean = false
+)
+
+data class WorkNote(
+    val id: String = UUID.randomUUID().toString(),
+    val date: LocalDate = LocalDate.now(),
+    val text: String,
+    val kind: WorkNoteKind = WorkNoteKind.General,
+    val tags: List<String> = emptyList(),
+    val createdAt: LocalDateTime = LocalDateTime.now()
 )
 
 data class WorkShift(
@@ -51,11 +87,13 @@ data class WorkEvent(
 
 data class AppState(
     val tasks: List<TaskItem> = emptyList(),
+    val notes: List<WorkNote> = emptyList(),
     val events: List<WorkEvent> = emptyList(),
     val shifts: List<WorkShift> = emptyList(),
     val daysOff: Set<LocalDate> = emptySet(),
     val defaultDaysOff: Set<DayOfWeek> = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
     val darkMode: Boolean = false,
     val accentStyle: AccentStyle = AccentStyle.Classic,
+    val widgetLayoutMode: WidgetLayoutMode = WidgetLayoutMode.Standard,
     val selectedCalendarId: Long? = null
 )

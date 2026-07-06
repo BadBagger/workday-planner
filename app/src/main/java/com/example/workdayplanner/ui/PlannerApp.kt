@@ -82,7 +82,11 @@ import com.example.workdayplanner.data.AccentStyle
 import com.example.workdayplanner.data.AppState
 import com.example.workdayplanner.data.RepeatRule
 import com.example.workdayplanner.data.TaskItem
+import com.example.workdayplanner.data.TaskCategory
 import com.example.workdayplanner.data.TaskRecurrence
+import com.example.workdayplanner.data.WorkNote
+import com.example.workdayplanner.data.WorkNoteKind
+import com.example.workdayplanner.data.WidgetLayoutMode
 import com.example.workdayplanner.data.ParsedSchedule
 import com.example.workdayplanner.data.WorkShift
 import com.example.workdayplanner.data.WorkEvent
@@ -100,7 +104,11 @@ private val screenPadding = 18.dp
 private val sectionGap = 14.dp
 
 @Composable
-fun PlannerApp(viewModel: PlannerViewModel) {
+fun PlannerApp(
+    viewModel: PlannerViewModel,
+    requestedTaskId: String? = null,
+    onTaskRequestHandled: () -> Unit = {}
+) {
     val navController = rememberNavController()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val importState by viewModel.importState.collectAsStateWithLifecycle()
@@ -108,6 +116,14 @@ fun PlannerApp(viewModel: PlannerViewModel) {
     val calendarMessage by viewModel.calendarMessage.collectAsStateWithLifecycle()
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
     val topLevel = listOf(Screen.Tasks, Screen.Schedule, Screen.Import)
+
+    LaunchedEffect(requestedTaskId, state.tasks) {
+        val taskId = requestedTaskId?.takeIf { id -> state.tasks.any { it.id == id } } ?: return@LaunchedEffect
+        navController.navigate("${Screen.TaskDetail.route}/$taskId") {
+            launchSingleTop = true
+        }
+        onTaskRequestHandled()
+    }
 
     Scaffold(
         topBar = {
@@ -161,6 +177,9 @@ fun PlannerApp(viewModel: PlannerViewModel) {
                     onAddEvent = { navController.navigate("${Screen.EventDetail.route}/new") },
                     onToggleComplete = viewModel::toggleComplete,
                     onDelete = viewModel::deleteTask,
+                    onAddNote = viewModel::addWorkNote,
+                    onDeleteNote = viewModel::deleteWorkNote,
+                    onCreateTaskFromNote = viewModel::createTaskFromNote,
                     onDeleteEvent = viewModel::deleteEvent
                 )
             }
@@ -172,6 +191,7 @@ fun PlannerApp(viewModel: PlannerViewModel) {
                     onClearSchedule = viewModel::clearSchedule,
                     onDarkModeChanged = viewModel::setDarkMode,
                     onAccentStyleChanged = viewModel::setAccentStyle,
+                    onWidgetLayoutModeChanged = viewModel::setWidgetLayoutMode,
                     calendars = calendars,
                     calendarMessage = calendarMessage,
                     onLoadCalendars = viewModel::loadCalendars,
@@ -198,6 +218,7 @@ fun PlannerApp(viewModel: PlannerViewModel) {
             ) { entry ->
                 val taskId = entry.arguments?.getString("taskId").orEmpty()
                 TaskDetailScreen(
+                    state = state,
                     task = state.tasks.firstOrNull { it.id == taskId },
                     onSave = {
                         viewModel.saveTask(it)
@@ -237,13 +258,31 @@ private fun TaskListScreen(
     onAddEvent: () -> Unit,
     onToggleComplete: (String) -> Unit,
     onDelete: (String) -> Unit,
+    onAddNote: (String) -> Unit,
+    onDeleteNote: (String) -> Unit,
+    onCreateTaskFromNote: (String) -> Unit,
     onDeleteEvent: (String) -> Unit
 ) {
+    val today = LocalDate.now()
     val tasks = state.tasks.sortedWith(compareBy<TaskItem> { it.completed }.thenBy { it.deadline })
+    val todayTasks = tasks.filter { task ->
+        !task.completed && task.deadline?.toLocalDate() == today
+    }
+    val todayTaskIds = todayTasks.map { it.id }.toSet()
+    val otherTasks = tasks.filterNot { task -> task.id in todayTaskIds }
     val events = state.events.sortedBy { it.startsAt }
-    if (tasks.isEmpty() && events.isEmpty()) {
+    val todayNotes = state.notes.filter { it.date == today }.sortedByDescending { it.createdAt }
+    val recentNotes = state.notes.filterNot { it.date == today }.sortedByDescending { it.createdAt }.take(4)
+    if (tasks.isEmpty() && events.isEmpty() && state.notes.isEmpty()) {
         Column(Modifier.fillMaxSize().padding(screenPadding), verticalArrangement = Arrangement.spacedBy(sectionGap)) {
             CommandCenterCard(state = state)
+            DailyNotesSection(
+                todayNotes = emptyList(),
+                recentNotes = emptyList(),
+                onAddNote = onAddNote,
+                onDeleteNote = onDeleteNote,
+                onCreateTaskFromNote = onCreateTaskFromNote
+            )
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Event, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -258,6 +297,15 @@ private fun TaskListScreen(
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         item { CommandCenterCard(state = state) }
+        item {
+            DailyNotesSection(
+                todayNotes = todayNotes,
+                recentNotes = recentNotes,
+                onAddNote = onAddNote,
+                onDeleteNote = onDeleteNote,
+                onCreateTaskFromNote = onCreateTaskFromNote
+            )
+        }
         item {
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Event, contentDescription = null)
@@ -275,10 +323,27 @@ private fun TaskListScreen(
                 )
             }
         }
-        if (tasks.isNotEmpty()) {
-            item { Text("Daily to-dos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+        if (todayTasks.isNotEmpty()) {
+            item { SectionHeader("Today tasks", "Work items due today") }
+            items(todayTasks, key = { "today-${it.id}" }) { task ->
+                TaskCard(
+                    task = task,
+                    isDayOff = task.deadline?.toLocalDate()?.let { TaskRecurrence.isDayOff(it, state) } == true,
+                    onClick = { onTaskClick(task) },
+                    onToggleComplete = { onToggleComplete(task.id) },
+                    onDelete = { onDelete(task.id) }
+                )
+            }
         }
-        items(tasks, key = { it.id }) { task ->
+        if (otherTasks.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = if (todayTasks.isEmpty()) "Daily to-dos" else "Upcoming and completed",
+                    subtitle = if (todayTasks.isEmpty()) "Tasks for your workday" else "Everything not due today"
+                )
+            }
+        }
+        items(otherTasks, key = { it.id }) { task ->
             TaskCard(
                 task = task,
                 isDayOff = task.deadline?.toLocalDate()?.let { TaskRecurrence.isDayOff(it, state) } == true,
@@ -299,6 +364,7 @@ private fun CommandCenterCard(state: AppState) {
         .minWithOrNull(compareBy<WorkShift> { it.date }.thenBy { it.start })
     val openTasks = state.tasks.count { !it.completed }
     val upcomingEvents = state.events.count { !it.startsAt.toLocalDate().isBefore(today) }
+    val todayNotes = state.notes.count { it.date == today }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -324,6 +390,158 @@ private fun CommandCenterCard(state: AppState) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AssistChip(onClick = {}, label = { Text("$openTasks open tasks") })
                 AssistChip(onClick = {}, label = { Text("$upcomingEvents upcoming events") })
+                AssistChip(onClick = {}, label = { Text("$todayNotes notes today") })
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(title: String, subtitle: String? = null) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        subtitle?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DailyNotesSection(
+    todayNotes: List<WorkNote>,
+    recentNotes: List<WorkNote>,
+    onAddNote: (String) -> Unit,
+    onDeleteNote: (String) -> Unit,
+    onCreateTaskFromNote: (String) -> Unit
+) {
+    var noteText by remember { mutableStateOf("") }
+    var selectedKind by remember { mutableStateOf<WorkNoteKind?>(null) }
+    var searchText by remember { mutableStateOf("") }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader("Daily work notes", "Smart tags organize notes automatically on this device.")
+            OutlinedTextField(
+                value = noteText,
+                onValueChange = { noteText = it },
+                label = { Text("Add a note from today") },
+                placeholder = { Text("Example: Frozen order short 2 cases, follow up tomorrow") },
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(
+                enabled = noteText.isNotBlank(),
+                onClick = {
+                    onAddNote(noteText)
+                    noteText = ""
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Save note")
+            }
+            val notesToShow = todayNotes + recentNotes
+            val issueCount = notesToShow.count { it.kind == WorkNoteKind.Issue }
+            val followUpCount = notesToShow.count { it.kind == WorkNoteKind.FollowUp }
+            val orderCount = notesToShow.count { it.kind == WorkNoteKind.Order }
+            if (notesToShow.isNotEmpty()) {
+                Text(
+                    buildList {
+                        if (issueCount > 0) add("$issueCount issue${if (issueCount == 1) "" else "s"}")
+                        if (followUpCount > 0) add("$followUpCount follow-up${if (followUpCount == 1) "" else "s"}")
+                        if (orderCount > 0) add("$orderCount order note${if (orderCount == 1) "" else "s"}")
+                    }.ifEmpty { listOf("${notesToShow.size} organized note${if (notesToShow.size == 1) "" else "s"}") }
+                        .joinToString(" • "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            OutlinedTextField(
+                value = searchText,
+                onValueChange = { searchText = it },
+                label = { Text("Search notes") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            val filterKinds = notesToShow.map { it.kind }.distinct().sortedBy { it.label }
+            if (filterKinds.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (selectedKind == null) {
+                        Button(onClick = { selectedKind = null }) { Text("All") }
+                    } else {
+                        OutlinedButton(onClick = { selectedKind = null }) { Text("All") }
+                    }
+                    filterKinds.forEach { kind ->
+                        if (selectedKind == kind) {
+                            Button(onClick = { selectedKind = null }) { Text(kind.label) }
+                        } else {
+                            OutlinedButton(onClick = { selectedKind = kind }) { Text(kind.label) }
+                        }
+                    }
+                }
+            }
+            val filteredByKind = selectedKind?.let { kind -> notesToShow.filter { it.kind == kind } } ?: notesToShow
+            val filteredNotes = filteredByKind.filter { note ->
+                searchText.isBlank() ||
+                    note.text.contains(searchText, ignoreCase = true) ||
+                    note.kind.label.contains(searchText, ignoreCase = true) ||
+                    note.tags.any { it.contains(searchText, ignoreCase = true) }
+            }
+            if (filteredNotes.isEmpty()) {
+                Text(
+                    if (notesToShow.isEmpty()) "No notes yet today." else "No notes match this filter.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                filteredNotes.forEach { note ->
+                    WorkNoteCard(
+                        note = note,
+                        onMakeTask = { onCreateTaskFromNote(note.id) },
+                        onDelete = { onDeleteNote(note.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun WorkNoteCard(note: WorkNote, onMakeTask: () -> Unit, onDelete: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(note.kind.label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    Text(note.date.format(dateFormatter), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Text(note.text, style = MaterialTheme.typography.bodyMedium)
+            if (note.tags.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    note.tags.forEach { tag ->
+                        AssistChip(onClick = {}, label = { Text(tag) })
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onMakeTask, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Make task")
+                }
+                OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Delete, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Delete")
+                }
             }
         }
     }
@@ -376,6 +594,7 @@ private fun EventCard(event: WorkEvent, onClick: () -> Unit, onDelete: () -> Uni
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TaskCard(
     task: TaskItem,
@@ -405,7 +624,8 @@ private fun TaskCard(
                 }
             }
             if (task.notes.isNotBlank()) Text(task.notes, style = MaterialTheme.typography.bodyMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (task.category != TaskCategory.General) AssistChip(onClick = {}, label = { Text(task.category.label) })
                 task.deadline?.let { AssistChip(onClick = {}, label = { Text(it.format(dateTimeFormatter)) }) }
                 if (task.repeatRule != RepeatRule.None) AssistChip(onClick = {}, label = { Text(task.repeatLabel()) })
                 if (isDayOff) AssistChip(onClick = {}, label = { Text("Day off") })
@@ -415,14 +635,22 @@ private fun TaskCard(
 }
 
 @Composable
-private fun TaskDetailScreen(task: TaskItem?, onSave: (TaskItem) -> Unit, onCancel: () -> Unit) {
+private fun TaskDetailScreen(state: AppState, task: TaskItem?, onSave: (TaskItem) -> Unit, onCancel: () -> Unit) {
     var title by remember(task?.id) { mutableStateOf(task?.title.orEmpty()) }
     var notes by remember(task?.id) { mutableStateOf(task?.notes.orEmpty()) }
+    var category by remember(task?.id) { mutableStateOf(task?.category ?: TaskCategory.General) }
     var deadline by remember(task?.id) { mutableStateOf(task?.deadline ?: LocalDateTime.now().plusHours(4)) }
     var alarmAt by remember(task?.id) { mutableStateOf(task?.alarmAt ?: deadline.minusMinutes(30)) }
     var repeatRule by remember(task?.id) { mutableStateOf(task?.repeatRule ?: RepeatRule.None) }
     var repeatDays by remember(task?.id) { mutableStateOf(task?.repeatDays ?: emptySet()) }
     var skipDaysOff by remember(task?.id) { mutableStateOf(task?.skipDaysOff ?: true) }
+    val nextShift = remember(state.shifts) {
+        val now = LocalDateTime.now()
+        state.shifts
+            .map { shift -> shift.date.atTime(shift.start) }
+            .filter { it.isAfter(now) }
+            .minOrNull()
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
@@ -430,8 +658,20 @@ private fun TaskDetailScreen(task: TaskItem?, onSave: (TaskItem) -> Unit, onCanc
     ) {
         OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+        TaskCategorySelector(selected = category, onSelected = { category = it })
         DateTimeRow("Deadline", deadline, onChanged = { deadline = it })
         DateTimeRow("Alarm", alarmAt, onChanged = { alarmAt = it })
+        nextShift?.let { shiftStart ->
+            OutlinedButton(
+                onClick = {
+                    deadline = shiftStart.minusMinutes(30)
+                    alarmAt = deadline.minusMinutes(30)
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Set due before next shift (${shiftStart.format(dateTimeFormatter)})")
+            }
+        }
         RepeatRuleDropdown(selected = repeatRule, onSelected = { repeatRule = it })
         if (repeatRule == RepeatRule.CustomDays) {
             CustomRepeatDays(
@@ -454,6 +694,7 @@ private fun TaskDetailScreen(task: TaskItem?, onSave: (TaskItem) -> Unit, onCanc
                             id = task?.id ?: java.util.UUID.randomUUID().toString(),
                             title = title.trim(),
                             notes = notes.trim(),
+                            category = category,
                             deadline = deadline,
                             alarmAt = alarmAt,
                             repeatRule = repeatRule,
@@ -513,12 +754,34 @@ private fun EventDetailScreen(event: WorkEvent?, onSave: (WorkEvent) -> Unit, on
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
+private fun TaskCategorySelector(selected: TaskCategory, onSelected: (TaskCategory) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Category", style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            TaskCategory.entries.forEach { category ->
+                if (category == selected) {
+                    Button(onClick = { onSelected(category) }) { Text(category.label) }
+                } else {
+                    OutlinedButton(onClick = { onSelected(category) }) { Text(category.label) }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun CustomRepeatDays(
     selectedDays: Set<DayOfWeek>,
     onToggle: (DayOfWeek) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Repeat on", style = MaterialTheme.typography.labelLarge)
+        Text("Repeat on specific days", style = MaterialTheme.typography.labelLarge)
+        Text(
+            "Choose the weekdays this task should come back.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             DayOfWeek.entries.forEach { day ->
                 val selected = day in selectedDays
@@ -626,7 +889,8 @@ private fun ScheduleHero(state: AppState) {
 private fun StyleSection(
     state: AppState,
     onDarkModeChanged: (Boolean) -> Unit,
-    onAccentStyleChanged: (AccentStyle) -> Unit
+    onAccentStyleChanged: (AccentStyle) -> Unit,
+    onWidgetLayoutModeChanged: (WidgetLayoutMode) -> Unit
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -655,6 +919,29 @@ private fun StyleSection(
                     }
                 }
             }
+            Text("Planner widget", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                WidgetLayoutMode.entries.forEach { mode ->
+                    if (state.widgetLayoutMode == mode) {
+                        Button(onClick = { onWidgetLayoutModeChanged(mode) }, modifier = Modifier.weight(1f)) {
+                            Text(mode.label)
+                        }
+                    } else {
+                        OutlinedButton(onClick = { onWidgetLayoutModeChanged(mode) }, modifier = Modifier.weight(1f)) {
+                            Text(mode.label)
+                        }
+                    }
+                }
+            }
+            Text(
+                when (state.widgetLayoutMode) {
+                    WidgetLayoutMode.Compact -> "Compact shows the next shift and one task."
+                    WidgetLayoutMode.Standard -> "Standard shows the next shift and up to three tasks."
+                    WidgetLayoutMode.Detailed -> "Detailed shows tasks plus your latest smart note."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -768,6 +1055,7 @@ private fun ScheduleScreen(
     onClearSchedule: () -> Unit,
     onDarkModeChanged: (Boolean) -> Unit,
     onAccentStyleChanged: (AccentStyle) -> Unit,
+    onWidgetLayoutModeChanged: (WidgetLayoutMode) -> Unit,
     calendars: List<DeviceCalendar>,
     calendarMessage: String?,
     onLoadCalendars: () -> Unit,
@@ -785,7 +1073,8 @@ private fun ScheduleScreen(
         StyleSection(
             state = state,
             onDarkModeChanged = onDarkModeChanged,
-            onAccentStyleChanged = onAccentStyleChanged
+            onAccentStyleChanged = onAccentStyleChanged,
+            onWidgetLayoutModeChanged = onWidgetLayoutModeChanged
         )
         CalendarSyncSection(
             state = state,
