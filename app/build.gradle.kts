@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 38
-        versionName = "2.18-work-images"
+        versionCode = 39
+        versionName = "2.19-schedule-changes"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

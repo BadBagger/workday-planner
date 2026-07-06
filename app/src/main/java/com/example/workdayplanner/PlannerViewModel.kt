@@ -12,6 +12,8 @@ import com.example.workdayplanner.data.AppState
 import com.example.workdayplanner.data.ParsedSchedule
 import com.example.workdayplanner.data.PlannerRepository
 import com.example.workdayplanner.data.ScheduleTextParser
+import com.example.workdayplanner.data.ScheduleChangeDetector
+import com.example.workdayplanner.data.ScheduleChangeSet
 import com.example.workdayplanner.data.TaskItem
 import com.example.workdayplanner.data.TaskRecurrence
 import com.example.workdayplanner.data.TaskCategory
@@ -212,7 +214,8 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun previewImport(): ParsedSchedule {
         val parsed = ScheduleTextParser.parse(currentImportState().rawText)
-        mutableImportState.value = currentImportState().copy(parsed = parsed, error = null)
+        val changes = ScheduleChangeDetector.compare(state.value, parsed)
+        mutableImportState.value = currentImportState().copy(parsed = parsed, changes = changes, error = null)
         return parsed
     }
 
@@ -297,6 +300,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 data class ImportUiState(
     val rawText: String = "",
     val parsed: ParsedSchedule? = null,
+    val changes: ScheduleChangeSet? = null,
     val isReadingImage: Boolean = false,
     val error: String? = null,
     val appliedMessage: String? = null

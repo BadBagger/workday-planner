@@ -94,6 +94,7 @@ import com.example.workdayplanner.data.WorkNote
 import com.example.workdayplanner.data.WorkNoteKind
 import com.example.workdayplanner.data.WidgetLayoutMode
 import com.example.workdayplanner.data.ParsedSchedule
+import com.example.workdayplanner.data.ScheduleChangeSet
 import com.example.workdayplanner.data.WorkImage
 import com.example.workdayplanner.data.WorkShift
 import com.example.workdayplanner.data.WorkEvent
@@ -221,6 +222,7 @@ fun PlannerApp(
                 ImportScreen(
                     rawText = importState.rawText,
                     parsed = importState.parsed,
+                    changes = importState.changes,
                     isReading = importState.isReadingImage,
                     message = importState.appliedMessage,
                     error = importState.error,
@@ -1371,6 +1373,7 @@ private fun ScheduleWeekCard(weekStart: LocalDate, state: AppState) {
 private fun ImportScreen(
     rawText: String,
     parsed: ParsedSchedule?,
+    changes: ScheduleChangeSet?,
     isReading: Boolean,
     message: String?,
     error: String?,
@@ -1418,6 +1421,7 @@ private fun ImportScreen(
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ImportStepHeader("3", "Preview shifts", "Confirm the app found the right shifts and days off.")
                     Text("${it.shifts.size} shifts, ${it.daysOff.size} days off")
+                    changes?.let { changeSet -> ScheduleChangeSummary(changeSet) }
                     ParsedScheduleRows(it)
                     if (it.unparsedLines.isNotEmpty()) Text("${it.unparsedLines.size} lines need review")
                     ManualCorrectionRows(it.unparsedLines)
@@ -1435,6 +1439,64 @@ private fun ImportStepHeader(step: String, title: String, body: String) {
         Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(body, style = MaterialTheme.typography.bodySmall)
     }
+}
+
+@Composable
+private fun ScheduleChangeSummary(changes: ScheduleChangeSet) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (changes.hasChanges) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+            }
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Schedule changes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            if (!changes.hasChanges) {
+                Text("No changes found against your saved schedule.", style = MaterialTheme.typography.bodyMedium)
+                return@Column
+            }
+            changes.changedShifts.forEach { change ->
+                ChangeLine(
+                    "Changed",
+                    "${change.date.format(dateFormatter)}: ${change.oldShift.start.format(timeFormatter)} - ${change.oldShift.end.format(timeFormatter)} to ${change.newShift.start.format(timeFormatter)} - ${change.newShift.end.format(timeFormatter)}"
+                )
+                if (change.oldShift.label != change.newShift.label) {
+                    ChangeLine("Role", "${change.oldShift.label} to ${change.newShift.label}")
+                }
+            }
+            changes.addedShifts.forEach { shift ->
+                ChangeLine("Added", shift.displayLine())
+            }
+            changes.removedShifts.forEach { shift ->
+                ChangeLine("Removed", shift.displayLine())
+            }
+            changes.newDaysOff.sorted().forEach { date ->
+                ChangeLine("Day off", "${date.format(dateFormatter)} is now not scheduled")
+            }
+            changes.removedDaysOff.sorted().forEach { date ->
+                ChangeLine("Scheduled", "${date.format(dateFormatter)} is no longer marked off")
+            }
+            changes.overtimeWarnings.forEach { warning ->
+                ChangeLine("Hours", warning)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChangeLine(label: String, body: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+        Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        Text(body, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+    }
+}
+
+private fun WorkShift.displayLine(): String {
+    return "${date.format(dateFormatter)}: ${start.format(timeFormatter)} - ${end.format(timeFormatter)}"
 }
 
 @Composable
