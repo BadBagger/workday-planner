@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 36
-        versionName = "2.16-chip-wrap"
+        versionCode = 37
+        versionName = "2.17-notes-tab"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
@@ -115,7 +116,7 @@ fun PlannerApp(
     val calendars by viewModel.calendars.collectAsStateWithLifecycle()
     val calendarMessage by viewModel.calendarMessage.collectAsStateWithLifecycle()
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
-    val topLevel = listOf(Screen.Tasks, Screen.Schedule, Screen.Import)
+    val topLevel = listOf(Screen.Tasks, Screen.Notes, Screen.Schedule, Screen.Import)
 
     LaunchedEffect(requestedTaskId, state.tasks) {
         val taskId = requestedTaskId?.takeIf { id -> state.tasks.any { it.id == id } } ?: return@LaunchedEffect
@@ -131,6 +132,7 @@ fun PlannerApp(
                 title = when {
                     currentRoute.startsWith(Screen.TaskDetail.route) -> "Task"
                     currentRoute.startsWith(Screen.EventDetail.route) -> "Event"
+                    currentRoute == Screen.Notes.route -> "Notes"
                     currentRoute == Screen.Schedule.route -> "Schedule"
                     currentRoute == Screen.Import.route -> "Import"
                     else -> "Workday Planner"
@@ -177,10 +179,15 @@ fun PlannerApp(
                     onAddEvent = { navController.navigate("${Screen.EventDetail.route}/new") },
                     onToggleComplete = viewModel::toggleComplete,
                     onDelete = viewModel::deleteTask,
+                    onDeleteEvent = viewModel::deleteEvent
+                )
+            }
+            composable(Screen.Notes.route) {
+                NotesScreen(
+                    state = state,
                     onAddNote = viewModel::addWorkNote,
                     onDeleteNote = viewModel::deleteWorkNote,
-                    onCreateTaskFromNote = viewModel::createTaskFromNote,
-                    onDeleteEvent = viewModel::deleteEvent
+                    onCreateTaskFromNote = viewModel::createTaskFromNote
                 )
             }
             composable(Screen.Schedule.route) {
@@ -258,9 +265,6 @@ private fun TaskListScreen(
     onAddEvent: () -> Unit,
     onToggleComplete: (String) -> Unit,
     onDelete: (String) -> Unit,
-    onAddNote: (String) -> Unit,
-    onDeleteNote: (String) -> Unit,
-    onCreateTaskFromNote: (String) -> Unit,
     onDeleteEvent: (String) -> Unit
 ) {
     val today = LocalDate.now()
@@ -271,18 +275,9 @@ private fun TaskListScreen(
     val todayTaskIds = todayTasks.map { it.id }.toSet()
     val otherTasks = tasks.filterNot { task -> task.id in todayTaskIds }
     val events = state.events.sortedBy { it.startsAt }
-    val todayNotes = state.notes.filter { it.date == today }.sortedByDescending { it.createdAt }
-    val recentNotes = state.notes.filterNot { it.date == today }.sortedByDescending { it.createdAt }.take(4)
-    if (tasks.isEmpty() && events.isEmpty() && state.notes.isEmpty()) {
+    if (tasks.isEmpty() && events.isEmpty()) {
         Column(Modifier.fillMaxSize().padding(screenPadding), verticalArrangement = Arrangement.spacedBy(sectionGap)) {
             CommandCenterCard(state = state)
-            DailyNotesSection(
-                todayNotes = emptyList(),
-                recentNotes = emptyList(),
-                onAddNote = onAddNote,
-                onDeleteNote = onDeleteNote,
-                onCreateTaskFromNote = onCreateTaskFromNote
-            )
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Event, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -297,15 +292,6 @@ private fun TaskListScreen(
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         item { CommandCenterCard(state = state) }
-        item {
-            DailyNotesSection(
-                todayNotes = todayNotes,
-                recentNotes = recentNotes,
-                onAddNote = onAddNote,
-                onDeleteNote = onDeleteNote,
-                onCreateTaskFromNote = onCreateTaskFromNote
-            )
-        }
         item {
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Event, contentDescription = null)
@@ -350,6 +336,33 @@ private fun TaskListScreen(
                 onClick = { onTaskClick(task) },
                 onToggleComplete = { onToggleComplete(task.id) },
                 onDelete = { onDelete(task.id) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun NotesScreen(
+    state: AppState,
+    onAddNote: (String) -> Unit,
+    onDeleteNote: (String) -> Unit,
+    onCreateTaskFromNote: (String) -> Unit
+) {
+    val today = LocalDate.now()
+    val todayNotes = state.notes.filter { it.date == today }.sortedByDescending { it.createdAt }
+    val recentNotes = state.notes.filterNot { it.date == today }.sortedByDescending { it.createdAt }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(screenPadding),
+        verticalArrangement = Arrangement.spacedBy(sectionGap)
+    ) {
+        item {
+            DailyNotesSection(
+                todayNotes = todayNotes,
+                recentNotes = recentNotes,
+                onAddNote = onAddNote,
+                onDeleteNote = onDeleteNote,
+                onCreateTaskFromNote = onCreateTaskFromNote
             )
         }
     }
@@ -1338,6 +1351,7 @@ private fun EmptyState(title: String, body: String) {
 
 private sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     data object Tasks : Screen("tasks", "Tasks", Icons.Default.CheckCircle)
+    data object Notes : Screen("notes", "Notes", Icons.AutoMirrored.Filled.Notes)
     data object Schedule : Screen("schedule", "Schedule", Icons.Default.CalendarMonth)
     data object Import : Screen("import", "Import", Icons.Default.FileUpload)
     data object TaskDetail : Screen("task", "Task", Icons.Default.CheckCircle)
