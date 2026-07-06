@@ -18,6 +18,7 @@ import com.example.workdayplanner.data.TaskCategory
 import com.example.workdayplanner.data.WorkNoteOrganizer
 import com.example.workdayplanner.data.WorkEvent
 import com.example.workdayplanner.data.WidgetLayoutMode
+import com.example.workdayplanner.data.WorkImage
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
@@ -27,8 +28,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -44,6 +47,8 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     val calendars: StateFlow<List<DeviceCalendar>> = mutableCalendars.asStateFlow()
     private val mutableCalendarMessage = MutableStateFlow<String?>(null)
     val calendarMessage: StateFlow<String?> = mutableCalendarMessage.asStateFlow()
+    private val mutableImageMessage = MutableStateFlow<String?>(null)
+    val imageMessage: StateFlow<String?> = mutableImageMessage.asStateFlow()
 
     fun saveTask(task: TaskItem) {
         repository.upsertTask(task)
@@ -75,6 +80,46 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
             alarmAt = LocalDateTime.now().plusDays(1).withHour(8).withMinute(30)
         )
         saveTask(task)
+    }
+
+    fun addWorkImage(title: String, sourceUri: Uri) {
+        viewModelScope.launch {
+            mutableImageMessage.value = "Reading work image..."
+            val result = runCatching {
+                val savedFile = copyWorkImage(sourceUri)
+                val image = InputImage.fromFilePath(getApplication(), Uri.fromFile(savedFile))
+                val recognized = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                    .process(image)
+                    .await()
+                val detectedText = recognized.toReadingOrderText()
+                val cleanTitle = title.trim().ifBlank {
+                    detectedText.lineSequence().firstOrNull { it.isNotBlank() }?.take(48) ?: "Work image"
+                }
+                WorkImage(
+                    title = cleanTitle,
+                    imagePath = savedFile.absolutePath,
+                    detectedText = detectedText,
+                    tags = detectImageTags("$cleanTitle\n$detectedText")
+                )
+            }
+            result.fold(
+                onSuccess = {
+                    repository.addImage(it)
+                    mutableImageMessage.value = if (it.detectedText.isBlank()) {
+                        "Saved image. Add a clear title so it is easy to search."
+                    } else {
+                        "Saved image and indexed detected text."
+                    }
+                },
+                onFailure = {
+                    mutableImageMessage.value = it.message ?: "Could not save image."
+                }
+            )
+        }
+    }
+
+    fun deleteWorkImage(imageId: String) {
+        repository.deleteImage(imageId)
     }
 
     fun saveEvent(event: WorkEvent) {
@@ -178,6 +223,30 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun currentImportState() = mutableImportState.value
+
+    private fun copyWorkImage(sourceUri: Uri): File {
+        val imageDir = File(getApplication<Application>().filesDir, "work_images")
+        if (!imageDir.exists()) imageDir.mkdirs()
+        val output = File(imageDir, "${UUID.randomUUID()}.jpg")
+        getApplication<Application>().contentResolver.openInputStream(sourceUri).use { input ->
+            requireNotNull(input) { "Could not open selected image." }
+            output.outputStream().use { input.copyTo(it) }
+        }
+        return output
+    }
+
+    private fun detectImageTags(text: String): List<String> {
+        val lower = text.lowercase()
+        val tags = linkedSetOf<String>()
+        if (lower.contains("plannogram") || lower.contains("planogram")) tags += "Plannogram"
+        if (lower.contains("fresh slice") || lower.contains("freshslice")) tags += "Fresh Slice"
+        if (lower.contains("deli") || lower.contains("sub") || lower.contains("slicer")) tags += "Deli"
+        if (lower.contains("bakery")) tags += "Bakery"
+        if (lower.contains("produce")) tags += "Produce"
+        if (lower.contains("meat") || lower.contains("seafood")) tags += "Meat"
+        if (lower.contains("order") || lower.contains("truck")) tags += "Orders"
+        return tags.take(6)
+    }
 
     private fun Text.toReadingOrderText(): String {
         val lines = textBlocks

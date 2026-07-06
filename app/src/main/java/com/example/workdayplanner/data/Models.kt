@@ -68,6 +68,16 @@ data class WorkNote(
     val createdAt: LocalDateTime = LocalDateTime.now()
 )
 
+data class WorkImage(
+    val id: String = UUID.randomUUID().toString(),
+    val date: LocalDate = LocalDate.now(),
+    val title: String,
+    val imagePath: String,
+    val detectedText: String = "",
+    val tags: List<String> = emptyList(),
+    val createdAt: LocalDateTime = LocalDateTime.now()
+)
+
 data class WorkShift(
     val id: String = UUID.randomUUID().toString(),
     val date: LocalDate,
@@ -88,6 +98,7 @@ data class WorkEvent(
 data class AppState(
     val tasks: List<TaskItem> = emptyList(),
     val notes: List<WorkNote> = emptyList(),
+    val images: List<WorkImage> = emptyList(),
     val events: List<WorkEvent> = emptyList(),
     val shifts: List<WorkShift> = emptyList(),
     val daysOff: Set<LocalDate> = emptySet(),

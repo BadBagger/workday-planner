@@ -5,10 +5,12 @@ import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -65,9 +67,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -89,8 +94,10 @@ import com.example.workdayplanner.data.WorkNote
 import com.example.workdayplanner.data.WorkNoteKind
 import com.example.workdayplanner.data.WidgetLayoutMode
 import com.example.workdayplanner.data.ParsedSchedule
+import com.example.workdayplanner.data.WorkImage
 import com.example.workdayplanner.data.WorkShift
 import com.example.workdayplanner.data.WorkEvent
+import java.io.File
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -115,6 +122,7 @@ fun PlannerApp(
     val importState by viewModel.importState.collectAsStateWithLifecycle()
     val calendars by viewModel.calendars.collectAsStateWithLifecycle()
     val calendarMessage by viewModel.calendarMessage.collectAsStateWithLifecycle()
+    val imageMessage by viewModel.imageMessage.collectAsStateWithLifecycle()
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
     val topLevel = listOf(Screen.Tasks, Screen.Notes, Screen.Schedule, Screen.Import)
 
@@ -187,7 +195,10 @@ fun PlannerApp(
                     state = state,
                     onAddNote = viewModel::addWorkNote,
                     onDeleteNote = viewModel::deleteWorkNote,
-                    onCreateTaskFromNote = viewModel::createTaskFromNote
+                    onCreateTaskFromNote = viewModel::createTaskFromNote,
+                    imageMessage = imageMessage,
+                    onAddImage = viewModel::addWorkImage,
+                    onDeleteImage = viewModel::deleteWorkImage
                 )
             }
             composable(Screen.Schedule.route) {
@@ -346,16 +357,28 @@ private fun NotesScreen(
     state: AppState,
     onAddNote: (String) -> Unit,
     onDeleteNote: (String) -> Unit,
-    onCreateTaskFromNote: (String) -> Unit
+    onCreateTaskFromNote: (String) -> Unit,
+    imageMessage: String?,
+    onAddImage: (String, Uri) -> Unit,
+    onDeleteImage: (String) -> Unit
 ) {
     val today = LocalDate.now()
     val todayNotes = state.notes.filter { it.date == today }.sortedByDescending { it.createdAt }
     val recentNotes = state.notes.filterNot { it.date == today }.sortedByDescending { it.createdAt }
+    val images = state.images.sortedWith(compareByDescending<WorkImage> { it.date }.thenByDescending { it.createdAt })
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
+        item {
+            WorkImagesSection(
+                images = images,
+                message = imageMessage,
+                onAddImage = onAddImage,
+                onDeleteImage = onDeleteImage
+            )
+        }
         item {
             DailyNotesSection(
                 todayNotes = todayNotes,
@@ -422,6 +445,138 @@ private fun SectionHeader(title: String, subtitle: String? = null) {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun WorkImagesSection(
+    images: List<WorkImage>,
+    message: String?,
+    onAddImage: (String, Uri) -> Unit,
+    onDeleteImage: (String) -> Unit
+) {
+    var title by remember { mutableStateOf("") }
+    var searchText by remember { mutableStateOf("") }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let {
+            onAddImage(title, it)
+            title = ""
+        }
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader("Work images", "Save reference photos and search labels or detected text.")
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                label = { Text("Image label") },
+                placeholder = { Text("Fresh Slice plannogram") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedButton(
+                onClick = { imagePicker.launch("image/*") },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Add work image")
+            }
+            message?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            OutlinedTextField(
+                value = searchText,
+                onValueChange = { searchText = it },
+                label = { Text("Search images") },
+                placeholder = { Text("plannogram, fresh slice, deli") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            val filteredImages = images.filter { image ->
+                searchText.isBlank() ||
+                    image.title.contains(searchText, ignoreCase = true) ||
+                    image.detectedText.contains(searchText, ignoreCase = true) ||
+                    image.tags.any { it.contains(searchText, ignoreCase = true) }
+            }
+
+            if (filteredImages.isEmpty()) {
+                Text(
+                    if (images.isEmpty()) "No work images saved yet." else "No images match this search.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                filteredImages.forEach { image ->
+                    WorkImageCard(image = image, onDelete = { onDeleteImage(image.id) })
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun WorkImageCard(image: WorkImage, onDelete: () -> Unit) {
+    val bitmap = remember(image.imagePath) { decodeWorkImage(image.imagePath) }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = image.title,
+                    modifier = Modifier.fillMaxWidth().height(180.dp),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(image.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(image.date.format(dateFormatter), style = MaterialTheme.typography.bodySmall)
+                }
+                TextButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Delete")
+                }
+            }
+            if (image.tags.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    image.tags.forEach { tag -> AssistChip(onClick = {}, label = { Text(tag) }) }
+                }
+            }
+            if (image.detectedText.isNotBlank()) {
+                Text(
+                    image.detectedText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+private fun decodeWorkImage(path: String): android.graphics.Bitmap? {
+    if (!File(path).exists()) return null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    val maxSide = 900
+    var sampleSize = 1
+    while ((bounds.outWidth / sampleSize) > maxSide || (bounds.outHeight / sampleSize) > maxSide) {
+        sampleSize *= 2
+    }
+    return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sampleSize })
 }
 
 @OptIn(ExperimentalLayoutApi::class)

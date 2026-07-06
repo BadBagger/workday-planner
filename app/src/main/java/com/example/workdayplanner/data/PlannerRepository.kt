@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -31,6 +32,17 @@ class PlannerRepository(context: Context) {
 
     fun deleteNote(noteId: String) = update { state ->
         state.copy(notes = state.notes.filterNot { it.id == noteId })
+    }
+
+    fun addImage(image: WorkImage) = update { state ->
+        state.copy(images = (state.images + image).sortedWith(compareByDescending<WorkImage> { it.date }.thenByDescending { it.createdAt }))
+    }
+
+    fun deleteImage(imageId: String) = update { state ->
+        state.images.firstOrNull { it.id == imageId }?.imagePath?.let { path ->
+            runCatching { File(path).delete() }
+        }
+        state.copy(images = state.images.filterNot { it.id == imageId })
     }
 
     fun upsertEvent(event: WorkEvent) = update { state ->
@@ -112,6 +124,7 @@ class PlannerRepository(context: Context) {
         return AppState(
             tasks = root.optJSONArray("tasks").toObjects(::taskFromJson),
             notes = root.optJSONArray("notes").toObjects(::noteFromJson),
+            images = root.optJSONArray("images").toObjects(::imageFromJson),
             events = root.optJSONArray("events").toObjects(::eventFromJson),
             shifts = root.optJSONArray("shifts").toObjects(::shiftFromJson),
             daysOff = root.optJSONArray("daysOff").toStrings().map(LocalDate::parse).toSet(),
@@ -135,6 +148,7 @@ class PlannerRepository(context: Context) {
         val root = JSONObject()
             .put("tasks", JSONArray(state.tasks.map(::taskToJson)))
             .put("notes", JSONArray(state.notes.map(::noteToJson)))
+            .put("images", JSONArray(state.images.map(::imageToJson)))
             .put("events", JSONArray(state.events.map(::eventToJson)))
             .put("shifts", JSONArray(state.shifts.map(::shiftToJson)))
             .put("daysOff", JSONArray(state.daysOff.map(LocalDate::toString)))
@@ -190,6 +204,26 @@ class PlannerRepository(context: Context) {
         kind = runCatching {
             WorkNoteKind.valueOf(json.optString("kind", WorkNoteKind.General.name))
         }.getOrDefault(WorkNoteKind.General),
+        tags = json.optJSONArray("tags").toStrings(),
+        createdAt = json.optString("createdAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse)
+            ?: LocalDateTime.now()
+    )
+
+    private fun imageToJson(image: WorkImage) = JSONObject()
+        .put("id", image.id)
+        .put("date", image.date.toString())
+        .put("title", image.title)
+        .put("imagePath", image.imagePath)
+        .put("detectedText", image.detectedText)
+        .put("tags", JSONArray(image.tags))
+        .put("createdAt", image.createdAt.toString())
+
+    private fun imageFromJson(json: JSONObject) = WorkImage(
+        id = json.getString("id"),
+        date = LocalDate.parse(json.getString("date")),
+        title = json.optString("title", "Work image"),
+        imagePath = json.getString("imagePath"),
+        detectedText = json.optString("detectedText"),
         tags = json.optJSONArray("tags").toStrings(),
         createdAt = json.optString("createdAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse)
             ?: LocalDateTime.now()
