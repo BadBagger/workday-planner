@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 45
-        versionName = "2.25-manager-messages"
+        versionCode = 46
+        versionName = "2.26-training-tracker"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

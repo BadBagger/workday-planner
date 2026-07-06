@@ -13,14 +13,18 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -41,7 +45,9 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -70,6 +76,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -86,6 +93,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.workdayplanner.PlannerViewModel
+import com.example.workdayplanner.TrainingImportUiState
 import com.example.workdayplanner.calendar.DeviceCalendar
 import com.example.workdayplanner.data.AccentStyle
 import com.example.workdayplanner.data.AppState
@@ -94,6 +102,7 @@ import com.example.workdayplanner.data.ManagerMessageType
 import com.example.workdayplanner.data.RepeatRule
 import com.example.workdayplanner.data.TaskItem
 import com.example.workdayplanner.data.TaskCategory
+import com.example.workdayplanner.data.TaskPriority
 import com.example.workdayplanner.data.TaskRecurrence
 import com.example.workdayplanner.data.WorkNote
 import com.example.workdayplanner.data.WorkNoteKind
@@ -106,6 +115,7 @@ import com.example.workdayplanner.data.ScheduleRisk
 import com.example.workdayplanner.data.ScheduleRiskAnalyzer
 import com.example.workdayplanner.data.TimecardCalculator
 import com.example.workdayplanner.data.TimecardEntry
+import com.example.workdayplanner.data.TrainingItem
 import com.example.workdayplanner.data.WorkChecklistTemplate
 import com.example.workdayplanner.data.WorkChecklistTemplates
 import com.example.workdayplanner.data.WorkImage
@@ -126,6 +136,14 @@ private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm
 private val screenPadding = 18.dp
 private val sectionGap = 14.dp
 
+private enum class TaskView(val label: String) {
+    Today("Today"),
+    Important("Important"),
+    Overdue("Overdue"),
+    Deadline("Deadline"),
+    All("All")
+}
+
 @Composable
 fun PlannerApp(
     viewModel: PlannerViewModel,
@@ -138,8 +156,9 @@ fun PlannerApp(
     val calendars by viewModel.calendars.collectAsStateWithLifecycle()
     val calendarMessage by viewModel.calendarMessage.collectAsStateWithLifecycle()
     val imageMessage by viewModel.imageMessage.collectAsStateWithLifecycle()
+    val trainingImportState by viewModel.trainingImportState.collectAsStateWithLifecycle()
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
-    val topLevel = listOf(Screen.Tasks, Screen.Notes, Screen.Schedule, Screen.Import)
+    val topLevel = listOf(Screen.Tasks, Screen.Training, Screen.Notes, Screen.Schedule, Screen.Import)
 
     LaunchedEffect(requestedTaskId, state.tasks) {
         val taskId = requestedTaskId?.takeIf { id -> state.tasks.any { it.id == id } } ?: return@LaunchedEffect
@@ -155,6 +174,7 @@ fun PlannerApp(
                 title = when {
                     currentRoute.startsWith(Screen.TaskDetail.route) -> "Task"
                     currentRoute.startsWith(Screen.EventDetail.route) -> "Event"
+                    currentRoute == Screen.Training.route -> "Training"
                     currentRoute == Screen.Notes.route -> "Notes"
                     currentRoute == Screen.Schedule.route -> "Schedule"
                     currentRoute == Screen.Import.route -> "Import"
@@ -221,6 +241,17 @@ fun PlannerApp(
                     imageMessage = imageMessage,
                     onAddImage = viewModel::addWorkImage,
                     onDeleteImage = viewModel::deleteWorkImage
+                )
+            }
+            composable(Screen.Training.route) {
+                TrainingScreen(
+                    state = state,
+                    importState = trainingImportState,
+                    onRecognizeImage = viewModel::recognizeTrainingImage,
+                    onTextChanged = viewModel::setTrainingImportText,
+                    onImport = viewModel::importTrainingItems,
+                    onToggleComplete = viewModel::toggleTrainingComplete,
+                    onDelete = viewModel::deleteTrainingItem
                 )
             }
             composable(Screen.Schedule.route) {
@@ -309,12 +340,54 @@ private fun TaskListScreen(
     onAddChecklist: (String) -> Unit
 ) {
     val today = LocalDate.now()
-    val tasks = state.tasks.sortedWith(compareBy<TaskItem> { it.completed }.thenBy { it.deadline })
-    val todayTasks = tasks.filter { task ->
-        !task.completed && task.deadline?.toLocalDate() == today
+    val now = LocalDateTime.now()
+    var taskView by remember { mutableStateOf(TaskView.Today) }
+    val tasks = state.tasks.sortedWith(
+        compareBy<TaskItem> { it.completed }
+            .thenByDescending { it.priority.sortWeight }
+            .thenBy { it.deadline ?: LocalDateTime.MAX }
+            .thenBy { it.title.lowercase() }
+    )
+    val filteredTasks = tasks.filter { task ->
+        when (taskView) {
+            TaskView.Today -> task.deadline?.toLocalDate() == today
+            TaskView.Important -> !task.completed && task.priority.sortWeight >= TaskPriority.High.sortWeight
+            TaskView.Overdue -> !task.completed && task.deadline?.isBefore(now) == true
+            TaskView.Deadline -> true
+            TaskView.All -> true
+        }
     }
-    val todayTaskIds = todayTasks.map { it.id }.toSet()
-    val otherTasks = tasks.filterNot { task -> task.id in todayTaskIds }
+    val overdueTasks = filteredTasks.filter { !it.completed && it.deadline?.isBefore(now) == true }
+    val criticalTasks = filteredTasks.filter { !it.completed && it.priority == TaskPriority.Critical && it !in overdueTasks }
+    val highTasks = filteredTasks.filter { !it.completed && it.priority == TaskPriority.High && it !in overdueTasks }
+    val normalTasks = filteredTasks.filter { !it.completed && it.priority.sortWeight < TaskPriority.High.sortWeight && it !in overdueTasks }
+    val dueSoonTasks = filteredTasks.filter {
+        !it.completed && it.deadline?.let { deadline -> !deadline.isBefore(now) && deadline.isBefore(now.plusHours(12)) } == true
+    }
+    val deadlineTodayTasks = filteredTasks.filter {
+        !it.completed && it.deadline?.toLocalDate() == today && it !in overdueTasks && it !in dueSoonTasks
+    }
+    val tomorrowTasks = filteredTasks.filter { !it.completed && it.deadline?.toLocalDate() == today.plusDays(1) }
+    val laterTasks = filteredTasks.filter {
+        !it.completed && it.deadline?.toLocalDate()?.isAfter(today.plusDays(1)) == true
+    }
+    val noDeadlineTasks = filteredTasks.filter { !it.completed && it.deadline == null }
+    val completedTasks = filteredTasks.filter { it.completed }
+    val allOpenTasks = tasks.filterNot { it.completed }
+    val allOverdueCount = allOpenTasks.count { it.deadline?.isBefore(now) == true }
+    val allCriticalCount = allOpenTasks.count { it.priority == TaskPriority.Critical }
+    val allDueSoonCount = allOpenTasks.count {
+        it.deadline?.let { deadline -> !deadline.isBefore(now) && deadline.isBefore(now.plusHours(12)) } == true
+    }
+    val allTodayCount = allOpenTasks.count { it.deadline?.toLocalDate() == today }
+    val nextTask = allOpenTasks
+        .filter { it.deadline != null || it.priority.sortWeight >= TaskPriority.High.sortWeight }
+        .sortedWith(
+            compareBy<TaskItem> { it.deadline?.isBefore(now) != true }
+                .thenByDescending { it.priority.sortWeight }
+                .thenBy { it.deadline ?: LocalDateTime.MAX }
+        )
+        .firstOrNull()
     val events = state.events.sortedBy { it.startsAt }
     val risks = ScheduleRiskAnalyzer.risks(state, today)
     if (tasks.isEmpty() && events.isEmpty()) {
@@ -375,34 +448,500 @@ private fun TaskListScreen(
                 )
             }
         }
-        if (todayTasks.isNotEmpty()) {
-            item { SectionHeader("Today tasks", "Work items due today") }
-            items(todayTasks, key = { "today-${it.id}" }) { task ->
-                TaskCard(
-                    task = task,
-                    isDayOff = task.deadline?.toLocalDate()?.let { TaskRecurrence.isDayOff(it, state) } == true,
-                    onClick = { onTaskClick(task) },
-                    onToggleComplete = { onToggleComplete(task.id) },
-                    onDelete = { onDelete(task.id) }
-                )
-            }
-        }
-        if (otherTasks.isNotEmpty()) {
-            item {
-                SectionHeader(
-                    title = if (todayTasks.isEmpty()) "Daily to-dos" else "Upcoming and completed",
-                    subtitle = if (todayTasks.isEmpty()) "Tasks for your workday" else "Everything not due today"
-                )
-            }
-        }
-        items(otherTasks, key = { it.id }) { task ->
-            TaskCard(
-                task = task,
-                isDayOff = task.deadline?.toLocalDate()?.let { TaskRecurrence.isDayOff(it, state) } == true,
-                onClick = { onTaskClick(task) },
-                onToggleComplete = { onToggleComplete(task.id) },
-                onDelete = { onDelete(task.id) }
+        item {
+            TaskFocusCard(
+                overdueCount = allOverdueCount,
+                criticalCount = allCriticalCount,
+                dueSoonCount = allDueSoonCount,
+                todayCount = allTodayCount,
+                nextTask = nextTask,
+                onShowOverdue = { taskView = TaskView.Overdue },
+                onShowImportant = { taskView = TaskView.Important },
+                onShowDeadline = { taskView = TaskView.Deadline }
             )
+        }
+        item {
+            TaskViewSelector(
+                selected = taskView,
+                counts = mapOf(
+                    TaskView.Today to tasks.count { it.deadline?.toLocalDate() == today },
+                    TaskView.Important to tasks.count { !it.completed && it.priority.sortWeight >= TaskPriority.High.sortWeight },
+                    TaskView.Overdue to tasks.count { !it.completed && it.deadline?.isBefore(now) == true },
+                    TaskView.Deadline to tasks.count { !it.completed },
+                    TaskView.All to tasks.size
+                ),
+                onSelected = { taskView = it }
+            )
+        }
+        if (filteredTasks.isEmpty()) {
+            item { EmptyState("No ${taskView.label.lowercase()} tasks", "Switch views or add a task when something comes up.") }
+        }
+        if (taskView == TaskView.Deadline) {
+            taskSection(
+                title = "Overdue",
+                subtitle = "Past deadline",
+                tasks = overdueTasks.sortedBy { it.deadline },
+                state = state,
+                onTaskClick = onTaskClick,
+                onToggleComplete = onToggleComplete,
+                onDelete = onDelete
+            )
+            taskSection(
+                title = "Due soon",
+                subtitle = "Next 12 hours",
+                tasks = dueSoonTasks.sortedBy { it.deadline },
+                state = state,
+                onTaskClick = onTaskClick,
+                onToggleComplete = onToggleComplete,
+                onDelete = onDelete
+            )
+            taskSection(
+                title = "Later today",
+                subtitle = "Still due today",
+                tasks = deadlineTodayTasks.sortedBy { it.deadline },
+                state = state,
+                onTaskClick = onTaskClick,
+                onToggleComplete = onToggleComplete,
+                onDelete = onDelete
+            )
+            taskSection(
+                title = "Tomorrow",
+                subtitle = today.plusDays(1).format(dateFormatter),
+                tasks = tomorrowTasks.sortedBy { it.deadline },
+                state = state,
+                onTaskClick = onTaskClick,
+                onToggleComplete = onToggleComplete,
+                onDelete = onDelete
+            )
+            taskSection(
+                title = "Later",
+                subtitle = "After tomorrow",
+                tasks = laterTasks.sortedBy { it.deadline },
+                state = state,
+                onTaskClick = onTaskClick,
+                onToggleComplete = onToggleComplete,
+                onDelete = onDelete
+            )
+            taskSection(
+                title = "No deadline",
+                subtitle = "Needs a date when ready",
+                tasks = noDeadlineTasks,
+                state = state,
+                onTaskClick = onTaskClick,
+                onToggleComplete = onToggleComplete,
+                onDelete = onDelete
+            )
+        } else {
+            taskSection(
+                title = "Overdue",
+                subtitle = "Past deadline",
+                tasks = overdueTasks,
+                state = state,
+                onTaskClick = onTaskClick,
+                onToggleComplete = onToggleComplete,
+                onDelete = onDelete
+            )
+            taskSection(
+                title = "Critical",
+                subtitle = "Do first",
+                tasks = criticalTasks,
+                state = state,
+                onTaskClick = onTaskClick,
+                onToggleComplete = onToggleComplete,
+                onDelete = onDelete
+            )
+            taskSection(
+                title = "High priority",
+                subtitle = "Important work",
+                tasks = highTasks,
+                state = state,
+                onTaskClick = onTaskClick,
+                onToggleComplete = onToggleComplete,
+                onDelete = onDelete
+            )
+            taskSection(
+                title = if (taskView == TaskView.Today) "Today tasks" else "Normal priority",
+                subtitle = if (taskView == TaskView.Today) "Routine work due today" else "Sorted by deadline",
+                tasks = normalTasks,
+                state = state,
+                onTaskClick = onTaskClick,
+                onToggleComplete = onToggleComplete,
+                onDelete = onDelete
+            )
+        }
+        taskSection(
+            title = "Completed",
+            subtitle = "Done in this view",
+            tasks = completedTasks,
+            state = state,
+            onTaskClick = onTaskClick,
+            onToggleComplete = onToggleComplete,
+            onDelete = onDelete
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TaskFocusCard(
+    overdueCount: Int,
+    criticalCount: Int,
+    dueSoonCount: Int,
+    todayCount: Int,
+    nextTask: TaskItem?,
+    onShowOverdue: () -> Unit,
+    onShowImportant: () -> Unit,
+    onShowDeadline: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Focus", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        nextTask?.focusLine().orEmpty().ifBlank { "No urgent task needs attention." },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FocusChip(
+                    label = "$overdueCount overdue",
+                    color = Color(0xFFFF5A66),
+                    enabled = overdueCount > 0,
+                    onClick = onShowOverdue
+                )
+                FocusChip(
+                    label = "$criticalCount critical",
+                    color = Color(0xFFFF5A66),
+                    enabled = criticalCount > 0,
+                    onClick = onShowImportant
+                )
+                FocusChip(
+                    label = "$dueSoonCount due soon",
+                    color = Color(0xFFFFB020),
+                    enabled = dueSoonCount > 0,
+                    onClick = onShowDeadline
+                )
+                FocusChip(
+                    label = "$todayCount today",
+                    color = MaterialTheme.colorScheme.primary,
+                    enabled = todayCount > 0,
+                    onClick = onShowDeadline
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FocusChip(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
+    AssistChip(
+        onClick = onClick,
+        enabled = enabled,
+        label = { Text(label) },
+        colors = AssistChipDefaults.assistChipColors(
+            containerColor = color.copy(alpha = 0.16f),
+            labelColor = color,
+            disabledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
+            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    )
+}
+
+private fun TaskItem.focusLine(): String {
+    val due = deadline?.format(dateTimeFormatter)
+    val prefix = when (priority) {
+        TaskPriority.Critical -> "Critical"
+        TaskPriority.High -> "High priority"
+        TaskPriority.Normal -> "Next"
+        TaskPriority.Low -> "Low priority"
+    }
+    return if (due == null) "$prefix: $title" else "$prefix: $title due $due"
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.taskSection(
+    title: String,
+    subtitle: String,
+    tasks: List<TaskItem>,
+    state: AppState,
+    onTaskClick: (TaskItem) -> Unit,
+    onToggleComplete: (String) -> Unit,
+    onDelete: (String) -> Unit
+) {
+    if (tasks.isEmpty()) return
+    item { SectionHeader(title, subtitle) }
+    items(tasks, key = { "$title-${it.id}" }) { task ->
+        TaskCard(
+            task = task,
+            isDayOff = task.deadline?.toLocalDate()?.let { TaskRecurrence.isDayOff(it, state) } == true,
+            onClick = { onTaskClick(task) },
+            onToggleComplete = { onToggleComplete(task.id) },
+            onDelete = { onDelete(task.id) }
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TaskViewSelector(
+    selected: TaskView,
+    counts: Map<TaskView, Int>,
+    onSelected: (TaskView) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Task view", style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            TaskView.entries.forEach { view ->
+                val label = "${view.label} ${counts[view] ?: 0}"
+                if (view == selected) {
+                    Button(onClick = { onSelected(view) }) { Text(label) }
+                } else {
+                    OutlinedButton(onClick = { onSelected(view) }) { Text(label) }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TrainingScreen(
+    state: AppState,
+    importState: TrainingImportUiState,
+    onRecognizeImage: (Uri) -> Unit,
+    onTextChanged: (String) -> Unit,
+    onImport: () -> Unit,
+    onToggleComplete: (String) -> Unit,
+    onDelete: (String) -> Unit
+) {
+    val today = LocalDate.now()
+    var searchText by remember { mutableStateOf("") }
+    var showCompleted by remember { mutableStateOf(false) }
+    val openItems = state.trainingItems.filter { it.completedAt == null }
+    val overdue = openItems.count { it.dueDate?.isBefore(today) == true }
+    val dueSoon = openItems.count { it.dueDate?.let { due -> !due.isBefore(today) && !due.isAfter(today.plusDays(7)) } == true }
+    val noDate = openItems.count { it.dueDate == null }
+    val filteredItems = state.trainingItems
+        .filter { showCompleted || it.completedAt == null }
+        .filter { item ->
+            searchText.isBlank() ||
+                item.associateName.contains(searchText, ignoreCase = true) ||
+                item.trainingTitle.contains(searchText, ignoreCase = true) ||
+                item.sourceText.contains(searchText, ignoreCase = true)
+        }
+        .sortedWith(compareBy<TrainingItem> { it.completedAt != null }.thenBy { it.dueDate ?: LocalDate.MAX }.thenBy { it.associateName })
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(screenPadding),
+        verticalArrangement = Arrangement.spacedBy(sectionGap)
+    ) {
+        item {
+            TrainingImportCard(
+                importState = importState,
+                onRecognizeImage = onRecognizeImage,
+                onTextChanged = onTextChanged,
+                onImport = onImport
+            )
+        }
+        item {
+            TrainingSummaryCard(
+                openCount = openItems.size,
+                overdueCount = overdue,
+                dueSoonCount = dueSoon,
+                noDateCount = noDate
+            )
+        }
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Training database", "Search associates, modules, or OCR text.")
+                    OutlinedTextField(
+                        value = searchText,
+                        onValueChange = { searchText = it },
+                        label = { Text("Search training") },
+                        placeholder = { Text("associate name, CBT, food safety") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(checked = showCompleted, onCheckedChange = { showCompleted = it })
+                        Spacer(Modifier.width(8.dp))
+                        Text("Show completed")
+                    }
+                }
+            }
+        }
+        if (filteredItems.isEmpty()) {
+            item {
+                EmptyState(
+                    title = if (state.trainingItems.isEmpty()) "No training imported yet" else "No training matches",
+                    body = "Take a photo of the training printout or paste OCR text to build the list."
+                )
+            }
+        } else {
+            items(filteredItems, key = { it.id }) { item ->
+                TrainingItemCard(
+                    item = item,
+                    today = today,
+                    onToggleComplete = { onToggleComplete(item.id) },
+                    onDelete = { onDelete(item.id) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrainingImportCard(
+    importState: TrainingImportUiState,
+    onRecognizeImage: (Uri) -> Unit,
+    onTextChanged: (String) -> Unit,
+    onImport: () -> Unit
+) {
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let(onRecognizeImage)
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader("Import training printout", "Photo OCR builds an associate training list.")
+            OutlinedButton(
+                onClick = { imagePicker.launch("image/*") },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.FileUpload, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (importState.isReadingImage) "Reading photo..." else "Take or choose printout photo")
+            }
+            OutlinedTextField(
+                value = importState.rawText,
+                onValueChange = onTextChanged,
+                label = { Text("Detected training text") },
+                minLines = 4,
+                modifier = Modifier.fillMaxWidth()
+            )
+            importState.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            importState.message?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall) }
+            if (importState.parsedItems.isNotEmpty()) {
+                Text("${importState.parsedItems.size} rows ready to import", style = MaterialTheme.typography.labelLarge)
+                importState.parsedItems.take(3).forEach { item ->
+                    Text(
+                        "${item.associateName} - ${item.trainingTitle}${item.dueDate?.let { " - due ${it.format(dateFormatter)}" }.orEmpty()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Button(
+                onClick = onImport,
+                enabled = importState.parsedItems.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Import training rows")
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TrainingSummaryCard(openCount: Int, overdueCount: Int, dueSoonCount: Int, noDateCount: Int) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionHeader("Training focus", "Prioritize what needs attention first.")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(onClick = {}, label = { Text("$openCount open") })
+                AssistChip(
+                    onClick = {},
+                    label = { Text("$overdueCount overdue") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = Color(0xFFFF5A66).copy(alpha = 0.16f),
+                        labelColor = Color(0xFFFF5A66)
+                    )
+                )
+                AssistChip(
+                    onClick = {},
+                    label = { Text("$dueSoonCount due 7 days") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = Color(0xFFFFB020).copy(alpha = 0.16f),
+                        labelColor = Color(0xFFFFB020)
+                    )
+                )
+                AssistChip(onClick = {}, label = { Text("$noDateCount no date") })
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TrainingItemCard(
+    item: TrainingItem,
+    today: LocalDate,
+    onToggleComplete: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val statusColor = when {
+        item.completedAt != null -> Color(0xFF54D17A)
+        item.dueDate?.isBefore(today) == true -> Color(0xFFFF5A66)
+        item.dueDate?.let { !it.isAfter(today.plusDays(7)) } == true -> Color(0xFFFFB020)
+        else -> MaterialTheme.colorScheme.primary
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.45f))
+    ) {
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            Box(Modifier.width(5.dp).fillMaxHeight().background(statusColor))
+            Column(Modifier.padding(14.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = item.completedAt != null, onCheckedChange = { onToggleComplete() })
+                    Column(Modifier.weight(1f)) {
+                        Text(item.associateName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(item.trainingTitle, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    TextButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, contentDescription = null)
+                    }
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item.dueDate?.let {
+                        AssistChip(
+                            onClick = {},
+                            label = { Text("Due ${it.format(dateFormatter)}") },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = statusColor.copy(alpha = 0.16f),
+                                labelColor = statusColor
+                            )
+                        )
+                    } ?: AssistChip(onClick = {}, label = { Text("No due date") })
+                    if (item.completedAt != null) AssistChip(onClick = {}, label = { Text("Done") })
+                }
+                if (item.sourceText.isNotBlank()) {
+                    Text(
+                        item.sourceText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
         }
     }
 }
@@ -1061,32 +1600,74 @@ private fun TaskCard(
     onToggleComplete: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val priorityColor = task.priority.priorityColor()
     Card(
         onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+        border = BorderStroke(
+            1.dp,
+            if (task.priority == TaskPriority.Normal) MaterialTheme.colorScheme.surfaceVariant else priorityColor.copy(alpha = 0.65f)
+        )
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = task.completed, onCheckedChange = { onToggleComplete() })
-                Text(
-                    text = task.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    textDecoration = if (task.completed) TextDecoration.LineThrough else null,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Delete")
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            Box(
+                Modifier
+                    .width(5.dp)
+                    .fillMaxHeight()
+                    .background(priorityColor)
+            )
+            Column(Modifier.padding(14.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = task.completed, onCheckedChange = { onToggleComplete() })
+                    Text(
+                        text = task.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        textDecoration = if (task.completed) TextDecoration.LineThrough else null,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Delete")
+                    }
                 }
-            }
-            if (task.notes.isNotBlank()) Text(task.notes, style = MaterialTheme.typography.bodyMedium)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (task.category != TaskCategory.General) AssistChip(onClick = {}, label = { Text(task.category.label) })
-                task.deadline?.let { AssistChip(onClick = {}, label = { Text(it.format(dateTimeFormatter)) }) }
-                if (task.repeatRule != RepeatRule.None) AssistChip(onClick = {}, label = { Text(task.repeatLabel()) })
-                if (isDayOff) AssistChip(onClick = {}, label = { Text("Day off") })
+                if (task.notes.isNotBlank()) Text(task.notes, style = MaterialTheme.typography.bodyMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (task.priority != TaskPriority.Normal) {
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(task.priority.label) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = priorityColor.copy(alpha = 0.18f),
+                                labelColor = priorityColor
+                            )
+                        )
+                    }
+                    if (task.category != TaskCategory.General) {
+                        val categoryColor = task.category.categoryColor()
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(task.category.label) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = categoryColor.copy(alpha = 0.16f),
+                                labelColor = categoryColor
+                            )
+                        )
+                    }
+                    task.deadline?.let {
+                        val deadlineColor = it.deadlineColor()
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(it.format(dateTimeFormatter)) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = deadlineColor.copy(alpha = 0.14f),
+                                labelColor = deadlineColor
+                            )
+                        )
+                    }
+                    if (task.repeatRule != RepeatRule.None) AssistChip(onClick = {}, label = { Text(task.repeatLabel()) })
+                    if (isDayOff) AssistChip(onClick = {}, label = { Text("Day off") })
+                }
             }
         }
     }
@@ -1097,6 +1678,7 @@ private fun TaskDetailScreen(state: AppState, task: TaskItem?, onSave: (TaskItem
     var title by remember(task?.id) { mutableStateOf(task?.title.orEmpty()) }
     var notes by remember(task?.id) { mutableStateOf(task?.notes.orEmpty()) }
     var category by remember(task?.id) { mutableStateOf(task?.category ?: TaskCategory.General) }
+    var priority by remember(task?.id) { mutableStateOf(task?.priority ?: TaskPriority.Normal) }
     var deadline by remember(task?.id) { mutableStateOf(task?.deadline ?: LocalDateTime.now().plusHours(4)) }
     var alarmAt by remember(task?.id) { mutableStateOf(task?.alarmAt ?: deadline.minusMinutes(30)) }
     var repeatRule by remember(task?.id) { mutableStateOf(task?.repeatRule ?: RepeatRule.None) }
@@ -1117,6 +1699,7 @@ private fun TaskDetailScreen(state: AppState, task: TaskItem?, onSave: (TaskItem
         OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, minLines = 3, modifier = Modifier.fillMaxWidth())
         TaskCategorySelector(selected = category, onSelected = { category = it })
+        TaskPrioritySelector(selected = priority, onSelected = { priority = it })
         DateTimeRow("Deadline", deadline, onChanged = { deadline = it })
         DateTimeRow("Alarm", alarmAt, onChanged = { alarmAt = it })
         nextShift?.let { shiftStart ->
@@ -1153,6 +1736,7 @@ private fun TaskDetailScreen(state: AppState, task: TaskItem?, onSave: (TaskItem
                             title = title.trim(),
                             notes = notes.trim(),
                             category = category,
+                            priority = priority,
                             deadline = deadline,
                             alarmAt = alarmAt,
                             repeatRule = repeatRule,
@@ -1217,10 +1801,44 @@ private fun TaskCategorySelector(selected: TaskCategory, onSelected: (TaskCatego
         Text("Category", style = MaterialTheme.typography.labelLarge)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             TaskCategory.entries.forEach { category ->
+                val color = category.categoryColor()
                 if (category == selected) {
-                    Button(onClick = { onSelected(category) }) { Text(category.label) }
+                    Button(
+                        onClick = { onSelected(category) },
+                        colors = ButtonDefaults.buttonColors(containerColor = color)
+                    ) {
+                        Text(category.label)
+                    }
                 } else {
-                    OutlinedButton(onClick = { onSelected(category) }) { Text(category.label) }
+                    OutlinedButton(
+                        onClick = { onSelected(category) },
+                        border = BorderStroke(1.dp, color.copy(alpha = 0.65f))
+                    ) {
+                        Text(category.label, color = color)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TaskPrioritySelector(selected: TaskPriority, onSelected: (TaskPriority) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Importance", style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            TaskPriority.entries.forEach { priority ->
+                val color = priority.priorityColor()
+                if (priority == selected) {
+                    Button(onClick = { onSelected(priority) }) { Text(priority.label) }
+                } else {
+                    OutlinedButton(
+                        onClick = { onSelected(priority) },
+                        border = BorderStroke(1.dp, color.copy(alpha = 0.65f))
+                    ) {
+                        Text(priority.label, color = color)
+                    }
                 }
             }
         }
@@ -1250,6 +1868,34 @@ private fun CustomRepeatDays(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TaskPriority.priorityColor(): Color = when (this) {
+    TaskPriority.Low -> Color(0xFF7E8798)
+    TaskPriority.Normal -> MaterialTheme.colorScheme.outline
+    TaskPriority.High -> Color(0xFFFFB020)
+    TaskPriority.Critical -> Color(0xFFFF5A66)
+}
+
+@Composable
+private fun TaskCategory.categoryColor(): Color = when (this) {
+    TaskCategory.General -> MaterialTheme.colorScheme.primary
+    TaskCategory.Orders -> Color(0xFF4DB6FF)
+    TaskCategory.Cleaning -> Color(0xFF54D17A)
+    TaskCategory.Prep -> Color(0xFFFFB020)
+    TaskCategory.Admin -> Color(0xFFB18CFF)
+    TaskCategory.Personal -> Color(0xFFFF7AB6)
+}
+
+@Composable
+private fun LocalDateTime.deadlineColor(): Color {
+    val now = LocalDateTime.now()
+    return when {
+        isBefore(now) -> Color(0xFFFF5A66)
+        isBefore(now.plusHours(12)) -> Color(0xFFFFB020)
+        else -> MaterialTheme.colorScheme.primary
     }
 }
 
@@ -1961,6 +2607,7 @@ private fun EmptyState(title: String, body: String) {
 
 private sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     data object Tasks : Screen("tasks", "Today", Icons.Default.CheckCircle)
+    data object Training : Screen("training", "Training", Icons.Default.CheckCircle)
     data object Notes : Screen("notes", "Notes", Icons.AutoMirrored.Filled.Notes)
     data object Schedule : Screen("schedule", "Schedule", Icons.Default.CalendarMonth)
     data object Import : Screen("import", "Import", Icons.Default.FileUpload)

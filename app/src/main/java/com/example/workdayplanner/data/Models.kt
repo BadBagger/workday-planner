@@ -29,6 +29,13 @@ enum class TaskCategory(val label: String) {
     Personal("Personal")
 }
 
+enum class TaskPriority(val label: String, val sortWeight: Int) {
+    Low("Low", 0),
+    Normal("Normal", 1),
+    High("High", 2),
+    Critical("Critical", 3)
+}
+
 enum class WidgetLayoutMode(val label: String) {
     Compact("Compact"),
     Standard("Standard"),
@@ -51,6 +58,7 @@ data class TaskItem(
     val title: String,
     val notes: String = "",
     val category: TaskCategory = TaskCategory.General,
+    val priority: TaskPriority = TaskPriority.Normal,
     val deadline: LocalDateTime? = null,
     val alarmAt: LocalDateTime? = null,
     val repeatRule: RepeatRule = RepeatRule.None,
@@ -76,6 +84,16 @@ data class WorkImage(
     val detectedText: String = "",
     val tags: List<String> = emptyList(),
     val createdAt: LocalDateTime = LocalDateTime.now()
+)
+
+data class TrainingItem(
+    val id: String = UUID.randomUUID().toString(),
+    val associateName: String,
+    val trainingTitle: String,
+    val dueDate: LocalDate? = null,
+    val sourceText: String = "",
+    val importedAt: LocalDateTime = LocalDateTime.now(),
+    val completedAt: LocalDateTime? = null
 )
 
 data class WorkShift(
@@ -125,5 +143,6 @@ data class AppState(
     val widgetLayoutMode: WidgetLayoutMode = WidgetLayoutMode.Standard,
     val selectedCalendarId: Long? = null,
     val paySettings: PaySettings = PaySettings(),
-    val timecards: List<TimecardEntry> = emptyList()
+    val timecards: List<TimecardEntry> = emptyList(),
+    val trainingItems: List<TrainingItem> = emptyList()
 )

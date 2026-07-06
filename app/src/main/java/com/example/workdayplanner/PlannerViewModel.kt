@@ -19,6 +19,8 @@ import com.example.workdayplanner.data.TaskItem
 import com.example.workdayplanner.data.TaskRecurrence
 import com.example.workdayplanner.data.TaskCategory
 import com.example.workdayplanner.data.TimecardEntry
+import com.example.workdayplanner.data.TrainingItem
+import com.example.workdayplanner.data.TrainingTextParser
 import com.example.workdayplanner.data.WorkChecklistTemplates
 import com.example.workdayplanner.data.WorkNoteOrganizer
 import com.example.workdayplanner.data.WorkEvent
@@ -54,6 +56,8 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     val calendarMessage: StateFlow<String?> = mutableCalendarMessage.asStateFlow()
     private val mutableImageMessage = MutableStateFlow<String?>(null)
     val imageMessage: StateFlow<String?> = mutableImageMessage.asStateFlow()
+    private val mutableTrainingImportState = MutableStateFlow(TrainingImportUiState())
+    val trainingImportState: StateFlow<TrainingImportUiState> = mutableTrainingImportState.asStateFlow()
 
     fun saveTask(task: TaskItem) {
         repository.upsertTask(task)
@@ -129,6 +133,67 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun deleteWorkImage(imageId: String) {
         repository.deleteImage(imageId)
+    }
+
+    fun setTrainingImportText(text: String) {
+        val parsed = TrainingTextParser.parse(text)
+        mutableTrainingImportState.value = mutableTrainingImportState.value.copy(
+            rawText = text,
+            parsedItems = parsed,
+            message = null,
+            error = null
+        )
+    }
+
+    fun recognizeTrainingImage(uri: Uri) {
+        viewModelScope.launch {
+            mutableTrainingImportState.value = mutableTrainingImportState.value.copy(isReadingImage = true, error = null, message = null)
+            val result = runCatching {
+                val image = InputImage.fromFilePath(getApplication(), uri)
+                val recognized = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                    .process(image)
+                    .await()
+                recognized.toReadingOrderText()
+            }
+            result.fold(
+                onSuccess = { text ->
+                    mutableTrainingImportState.value = TrainingImportUiState(
+                        rawText = text,
+                        parsedItems = TrainingTextParser.parse(text),
+                        isReadingImage = false
+                    )
+                },
+                onFailure = {
+                    mutableTrainingImportState.value = mutableTrainingImportState.value.copy(
+                        isReadingImage = false,
+                        error = it.message ?: "Could not read training photo."
+                    )
+                }
+            )
+        }
+    }
+
+    fun importTrainingItems() {
+        val current = mutableTrainingImportState.value
+        val items = current.parsedItems.ifEmpty { TrainingTextParser.parse(current.rawText) }
+        if (items.isEmpty()) {
+            mutableTrainingImportState.value = current.copy(error = "No training rows found yet.")
+            return
+        }
+        repository.addTrainingItems(items)
+        mutableTrainingImportState.value = current.copy(
+            parsedItems = items,
+            message = "Imported ${items.size} training items.",
+            error = null
+        )
+    }
+
+    fun toggleTrainingComplete(trainingId: String) {
+        repository.toggleTrainingComplete(trainingId)
+    }
+
+    fun deleteTrainingItem(trainingId: String) {
+        repository.deleteTrainingItem(trainingId)
     }
 
     fun saveEvent(event: WorkEvent) {
@@ -341,4 +406,12 @@ data class ImportUiState(
     val isReadingImage: Boolean = false,
     val error: String? = null,
     val appliedMessage: String? = null
+)
+
+data class TrainingImportUiState(
+    val rawText: String = "",
+    val parsedItems: List<TrainingItem> = emptyList(),
+    val isReadingImage: Boolean = false,
+    val message: String? = null,
+    val error: String? = null
 )

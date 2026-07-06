@@ -120,6 +120,28 @@ class PlannerRepository(context: Context) {
         state.copy(timecards = (state.timecards.filterNot { it.id == entry.id || it.date == entry.date } + entry).sortedByDescending { it.date })
     }
 
+    fun addTrainingItems(items: List<TrainingItem>) = update { state ->
+        state.copy(
+            trainingItems = (state.trainingItems + items)
+                .distinctBy { "${it.associateName.lowercase()}|${it.trainingTitle.lowercase()}|${it.dueDate}" }
+                .sortedWith(compareBy<TrainingItem> { it.completedAt != null }.thenBy { it.dueDate ?: LocalDate.MAX }.thenBy { it.associateName })
+        )
+    }
+
+    fun toggleTrainingComplete(trainingId: String) = update { state ->
+        state.copy(trainingItems = state.trainingItems.map { item ->
+            if (item.id == trainingId) {
+                item.copy(completedAt = if (item.completedAt == null) LocalDateTime.now() else null)
+            } else {
+                item
+            }
+        })
+    }
+
+    fun deleteTrainingItem(trainingId: String) = update { state ->
+        state.copy(trainingItems = state.trainingItems.filterNot { it.id == trainingId })
+    }
+
     private fun update(block: (AppState) -> AppState) {
         val next = block(mutableState.value)
         mutableState.value = next
@@ -150,7 +172,8 @@ class PlannerRepository(context: Context) {
                 null
             },
             paySettings = root.optJSONObject("paySettings")?.let(::paySettingsFromJson) ?: PaySettings(),
-            timecards = root.optJSONArray("timecards").toObjects(::timecardFromJson)
+            timecards = root.optJSONArray("timecards").toObjects(::timecardFromJson),
+            trainingItems = root.optJSONArray("trainingItems").toObjects(::trainingItemFromJson)
         )
     }
 
@@ -169,6 +192,7 @@ class PlannerRepository(context: Context) {
             .put("selectedCalendarId", state.selectedCalendarId)
             .put("paySettings", paySettingsToJson(state.paySettings))
             .put("timecards", JSONArray(state.timecards.map(::timecardToJson)))
+            .put("trainingItems", JSONArray(state.trainingItems.map(::trainingItemToJson)))
         prefs.edit().putString("state", root.toString()).apply()
     }
 
@@ -177,6 +201,7 @@ class PlannerRepository(context: Context) {
         .put("title", task.title)
         .put("notes", task.notes)
         .put("category", task.category.name)
+        .put("priority", task.priority.name)
         .put("deadline", task.deadline?.toString())
         .put("alarmAt", task.alarmAt?.toString())
         .put("repeatRule", task.repeatRule.name)
@@ -191,6 +216,9 @@ class PlannerRepository(context: Context) {
         category = runCatching {
             TaskCategory.valueOf(json.optString("category", TaskCategory.General.name))
         }.getOrDefault(TaskCategory.General),
+        priority = runCatching {
+            TaskPriority.valueOf(json.optString("priority", TaskPriority.Normal.name))
+        }.getOrDefault(TaskPriority.Normal),
         deadline = json.optString("deadline").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
         alarmAt = json.optString("alarmAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
         repeatRule = runCatching { RepeatRule.valueOf(json.optString("repeatRule")) }.getOrDefault(RepeatRule.None),
@@ -239,6 +267,26 @@ class PlannerRepository(context: Context) {
         tags = json.optJSONArray("tags").toStrings(),
         createdAt = json.optString("createdAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse)
             ?: LocalDateTime.now()
+    )
+
+    private fun trainingItemToJson(item: TrainingItem) = JSONObject()
+        .put("id", item.id)
+        .put("associateName", item.associateName)
+        .put("trainingTitle", item.trainingTitle)
+        .put("dueDate", item.dueDate?.toString())
+        .put("sourceText", item.sourceText)
+        .put("importedAt", item.importedAt.toString())
+        .put("completedAt", item.completedAt?.toString())
+
+    private fun trainingItemFromJson(json: JSONObject) = TrainingItem(
+        id = json.getString("id"),
+        associateName = json.optString("associateName", "Unknown associate"),
+        trainingTitle = json.optString("trainingTitle", "Training"),
+        dueDate = json.optString("dueDate").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDate::parse),
+        sourceText = json.optString("sourceText"),
+        importedAt = json.optString("importedAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse)
+            ?: LocalDateTime.now(),
+        completedAt = json.optString("completedAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse)
     )
 
     private fun paySettingsToJson(settings: PaySettings) = JSONObject()
