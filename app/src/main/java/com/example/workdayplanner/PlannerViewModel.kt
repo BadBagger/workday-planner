@@ -10,6 +10,7 @@ import com.example.workdayplanner.calendar.DeviceCalendar
 import com.example.workdayplanner.data.AccentStyle
 import com.example.workdayplanner.data.AppState
 import com.example.workdayplanner.data.ParsedSchedule
+import com.example.workdayplanner.data.PaySettings
 import com.example.workdayplanner.data.PlannerRepository
 import com.example.workdayplanner.data.ScheduleTextParser
 import com.example.workdayplanner.data.ScheduleChangeDetector
@@ -17,6 +18,8 @@ import com.example.workdayplanner.data.ScheduleChangeSet
 import com.example.workdayplanner.data.TaskItem
 import com.example.workdayplanner.data.TaskRecurrence
 import com.example.workdayplanner.data.TaskCategory
+import com.example.workdayplanner.data.TimecardEntry
+import com.example.workdayplanner.data.WorkChecklistTemplates
 import com.example.workdayplanner.data.WorkNoteOrganizer
 import com.example.workdayplanner.data.WorkEvent
 import com.example.workdayplanner.data.WidgetLayoutMode
@@ -56,6 +59,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         repository.upsertTask(task)
         alarmScheduler.cancel(task.id)
         alarmScheduler.schedule(task)
+    }
+
+    fun addChecklistTemplate(templateId: String) {
+        WorkChecklistTemplates.tasksFor(templateId).forEach(::saveTask)
     }
 
     fun deleteTask(taskId: String) {
@@ -176,6 +183,30 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         repository.setSelectedCalendar(calendarId)
     }
 
+    fun setPaySettings(settings: PaySettings) {
+        repository.setPaySettings(settings)
+    }
+
+    fun clockIn() {
+        updateTodayTimecard { entry, now -> entry.copy(clockIn = entry.clockIn ?: now) }
+    }
+
+    fun startLunch() {
+        updateTodayTimecard { entry, now -> entry.copy(lunchStart = entry.lunchStart ?: now) }
+    }
+
+    fun endLunch() {
+        updateTodayTimecard { entry, now -> entry.copy(lunchEnd = entry.lunchEnd ?: now) }
+    }
+
+    fun clockOut() {
+        updateTodayTimecard { entry, now -> entry.copy(clockOut = entry.clockOut ?: now) }
+    }
+
+    fun saveTimecardNote(note: String) {
+        updateTodayTimecard { entry, _ -> entry.copy(note = note.trim()) }
+    }
+
     fun syncShiftsToCalendar() {
         val calendarId = state.value.selectedCalendarId
         if (calendarId == null) {
@@ -226,6 +257,12 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun currentImportState() = mutableImportState.value
+
+    private fun updateTodayTimecard(block: (TimecardEntry, LocalDateTime) -> TimecardEntry) {
+        val today = LocalDate.now()
+        val current = state.value.timecards.firstOrNull { it.date == today } ?: TimecardEntry(date = today)
+        repository.upsertTimecard(block(current, LocalDateTime.now()))
+    }
 
     private fun copyWorkImage(sourceUri: Uri): File {
         val imageDir = File(getApplication<Application>().filesDir, "work_images")

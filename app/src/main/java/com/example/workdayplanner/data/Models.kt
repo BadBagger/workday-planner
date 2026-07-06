@@ -95,6 +95,23 @@ data class WorkEvent(
     val location: String = ""
 )
 
+data class PaySettings(
+    val hourlyRate: Double = 0.0,
+    val unpaidLunchMinutes: Int = 30,
+    val overtimeThresholdHours: Double = 40.0,
+    val overtimeMultiplier: Double = 1.5
+)
+
+data class TimecardEntry(
+    val id: String = UUID.randomUUID().toString(),
+    val date: LocalDate = LocalDate.now(),
+    val clockIn: LocalDateTime? = null,
+    val lunchStart: LocalDateTime? = null,
+    val lunchEnd: LocalDateTime? = null,
+    val clockOut: LocalDateTime? = null,
+    val note: String = ""
+)
+
 data class AppState(
     val tasks: List<TaskItem> = emptyList(),
     val notes: List<WorkNote> = emptyList(),
@@ -106,5 +123,7 @@ data class AppState(
     val darkMode: Boolean = false,
     val accentStyle: AccentStyle = AccentStyle.Classic,
     val widgetLayoutMode: WidgetLayoutMode = WidgetLayoutMode.Standard,
-    val selectedCalendarId: Long? = null
+    val selectedCalendarId: Long? = null,
+    val paySettings: PaySettings = PaySettings(),
+    val timecards: List<TimecardEntry> = emptyList()
 )

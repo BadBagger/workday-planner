@@ -112,6 +112,14 @@ class PlannerRepository(context: Context) {
         state.copy(selectedCalendarId = calendarId)
     }
 
+    fun setPaySettings(settings: PaySettings) = update { state ->
+        state.copy(paySettings = settings)
+    }
+
+    fun upsertTimecard(entry: TimecardEntry) = update { state ->
+        state.copy(timecards = (state.timecards.filterNot { it.id == entry.id || it.date == entry.date } + entry).sortedByDescending { it.date })
+    }
+
     private fun update(block: (AppState) -> AppState) {
         val next = block(mutableState.value)
         mutableState.value = next
@@ -140,7 +148,9 @@ class PlannerRepository(context: Context) {
                 root.optLong("selectedCalendarId")
             } else {
                 null
-            }
+            },
+            paySettings = root.optJSONObject("paySettings")?.let(::paySettingsFromJson) ?: PaySettings(),
+            timecards = root.optJSONArray("timecards").toObjects(::timecardFromJson)
         )
     }
 
@@ -157,6 +167,8 @@ class PlannerRepository(context: Context) {
             .put("accentStyle", state.accentStyle.name)
             .put("widgetLayoutMode", state.widgetLayoutMode.name)
             .put("selectedCalendarId", state.selectedCalendarId)
+            .put("paySettings", paySettingsToJson(state.paySettings))
+            .put("timecards", JSONArray(state.timecards.map(::timecardToJson)))
         prefs.edit().putString("state", root.toString()).apply()
     }
 
@@ -227,6 +239,38 @@ class PlannerRepository(context: Context) {
         tags = json.optJSONArray("tags").toStrings(),
         createdAt = json.optString("createdAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse)
             ?: LocalDateTime.now()
+    )
+
+    private fun paySettingsToJson(settings: PaySettings) = JSONObject()
+        .put("hourlyRate", settings.hourlyRate)
+        .put("unpaidLunchMinutes", settings.unpaidLunchMinutes)
+        .put("overtimeThresholdHours", settings.overtimeThresholdHours)
+        .put("overtimeMultiplier", settings.overtimeMultiplier)
+
+    private fun paySettingsFromJson(json: JSONObject) = PaySettings(
+        hourlyRate = json.optDouble("hourlyRate", 0.0),
+        unpaidLunchMinutes = json.optInt("unpaidLunchMinutes", 30).coerceAtLeast(0),
+        overtimeThresholdHours = json.optDouble("overtimeThresholdHours", 40.0).coerceAtLeast(0.0),
+        overtimeMultiplier = json.optDouble("overtimeMultiplier", 1.5).coerceAtLeast(1.0)
+    )
+
+    private fun timecardToJson(entry: TimecardEntry) = JSONObject()
+        .put("id", entry.id)
+        .put("date", entry.date.toString())
+        .put("clockIn", entry.clockIn?.toString())
+        .put("lunchStart", entry.lunchStart?.toString())
+        .put("lunchEnd", entry.lunchEnd?.toString())
+        .put("clockOut", entry.clockOut?.toString())
+        .put("note", entry.note)
+
+    private fun timecardFromJson(json: JSONObject) = TimecardEntry(
+        id = json.getString("id"),
+        date = LocalDate.parse(json.getString("date")),
+        clockIn = json.optString("clockIn").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
+        lunchStart = json.optString("lunchStart").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
+        lunchEnd = json.optString("lunchEnd").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
+        clockOut = json.optString("clockOut").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
+        note = json.optString("note")
     )
 
     private fun eventToJson(event: WorkEvent) = JSONObject()

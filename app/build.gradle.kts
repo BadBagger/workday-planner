@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 39
-        versionName = "2.19-schedule-changes"
+        versionCode = 45
+        versionName = "2.25-manager-messages"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

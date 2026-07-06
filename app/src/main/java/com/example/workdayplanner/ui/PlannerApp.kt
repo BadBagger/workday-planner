@@ -1,6 +1,9 @@
 package com.example.workdayplanner.ui
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Intent
@@ -86,6 +89,8 @@ import com.example.workdayplanner.PlannerViewModel
 import com.example.workdayplanner.calendar.DeviceCalendar
 import com.example.workdayplanner.data.AccentStyle
 import com.example.workdayplanner.data.AppState
+import com.example.workdayplanner.data.ManagerMessageBuilder
+import com.example.workdayplanner.data.ManagerMessageType
 import com.example.workdayplanner.data.RepeatRule
 import com.example.workdayplanner.data.TaskItem
 import com.example.workdayplanner.data.TaskCategory
@@ -94,11 +99,20 @@ import com.example.workdayplanner.data.WorkNote
 import com.example.workdayplanner.data.WorkNoteKind
 import com.example.workdayplanner.data.WidgetLayoutMode
 import com.example.workdayplanner.data.ParsedSchedule
+import com.example.workdayplanner.data.PayEstimator
+import com.example.workdayplanner.data.PaySettings
 import com.example.workdayplanner.data.ScheduleChangeSet
+import com.example.workdayplanner.data.ScheduleRisk
+import com.example.workdayplanner.data.ScheduleRiskAnalyzer
+import com.example.workdayplanner.data.TimecardCalculator
+import com.example.workdayplanner.data.TimecardEntry
+import com.example.workdayplanner.data.WorkChecklistTemplate
+import com.example.workdayplanner.data.WorkChecklistTemplates
 import com.example.workdayplanner.data.WorkImage
 import com.example.workdayplanner.data.WorkShift
 import com.example.workdayplanner.data.WorkEvent
 import java.io.File
+import java.time.Duration
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -144,6 +158,7 @@ fun PlannerApp(
                     currentRoute == Screen.Notes.route -> "Notes"
                     currentRoute == Screen.Schedule.route -> "Schedule"
                     currentRoute == Screen.Import.route -> "Import"
+                    currentRoute == Screen.Tasks.route -> "Today"
                     else -> "Workday Planner"
                 }
             )
@@ -188,7 +203,13 @@ fun PlannerApp(
                     onAddEvent = { navController.navigate("${Screen.EventDetail.route}/new") },
                     onToggleComplete = viewModel::toggleComplete,
                     onDelete = viewModel::deleteTask,
-                    onDeleteEvent = viewModel::deleteEvent
+                    onDeleteEvent = viewModel::deleteEvent,
+                    onClockIn = viewModel::clockIn,
+                    onStartLunch = viewModel::startLunch,
+                    onEndLunch = viewModel::endLunch,
+                    onClockOut = viewModel::clockOut,
+                    onSaveTimecardNote = viewModel::saveTimecardNote,
+                    onAddChecklist = viewModel::addChecklistTemplate
                 )
             }
             composable(Screen.Notes.route) {
@@ -211,6 +232,7 @@ fun PlannerApp(
                     onDarkModeChanged = viewModel::setDarkMode,
                     onAccentStyleChanged = viewModel::setAccentStyle,
                     onWidgetLayoutModeChanged = viewModel::setWidgetLayoutMode,
+                    onPaySettingsChanged = viewModel::setPaySettings,
                     calendars = calendars,
                     calendarMessage = calendarMessage,
                     onLoadCalendars = viewModel::loadCalendars,
@@ -278,7 +300,13 @@ private fun TaskListScreen(
     onAddEvent: () -> Unit,
     onToggleComplete: (String) -> Unit,
     onDelete: (String) -> Unit,
-    onDeleteEvent: (String) -> Unit
+    onDeleteEvent: (String) -> Unit,
+    onClockIn: () -> Unit,
+    onStartLunch: () -> Unit,
+    onEndLunch: () -> Unit,
+    onClockOut: () -> Unit,
+    onSaveTimecardNote: (String) -> Unit,
+    onAddChecklist: (String) -> Unit
 ) {
     val today = LocalDate.now()
     val tasks = state.tasks.sortedWith(compareBy<TaskItem> { it.completed }.thenBy { it.deadline })
@@ -288,9 +316,20 @@ private fun TaskListScreen(
     val todayTaskIds = todayTasks.map { it.id }.toSet()
     val otherTasks = tasks.filterNot { task -> task.id in todayTaskIds }
     val events = state.events.sortedBy { it.startsAt }
+    val risks = ScheduleRiskAnalyzer.risks(state, today)
     if (tasks.isEmpty() && events.isEmpty()) {
         Column(Modifier.fillMaxSize().padding(screenPadding), verticalArrangement = Arrangement.spacedBy(sectionGap)) {
             CommandCenterCard(state = state)
+            ScheduleRiskSection(risks = risks)
+            TimecardSection(
+                state = state,
+                onClockIn = onClockIn,
+                onStartLunch = onStartLunch,
+                onEndLunch = onEndLunch,
+                onClockOut = onClockOut,
+                onSaveNote = onSaveTimecardNote
+            )
+            ChecklistTemplateSection(onAddChecklist = onAddChecklist)
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Event, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -305,6 +344,20 @@ private fun TaskListScreen(
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         item { CommandCenterCard(state = state) }
+        if (risks.isNotEmpty()) {
+            item { ScheduleRiskSection(risks = risks) }
+        }
+        item {
+            TimecardSection(
+                state = state,
+                onClockIn = onClockIn,
+                onStartLunch = onStartLunch,
+                onEndLunch = onEndLunch,
+                onClockOut = onClockOut,
+                onSaveNote = onSaveTimecardNote
+            )
+        }
+        item { ChecklistTemplateSection(onAddChecklist = onAddChecklist) }
         item {
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Event, contentDescription = null)
@@ -382,6 +435,9 @@ private fun NotesScreen(
             )
         }
         item {
+            ManagerMessageSection()
+        }
+        item {
             DailyNotesSection(
                 todayNotes = todayNotes,
                 recentNotes = recentNotes,
@@ -397,6 +453,7 @@ private fun NotesScreen(
 @Composable
 private fun CommandCenterCard(state: AppState) {
     val today = LocalDate.now()
+    val now = LocalDateTime.now()
     val todayShifts = state.shifts.filter { it.date == today }.sortedBy { it.start }
     val nextShift = state.shifts
         .filter { !it.date.isBefore(today) }
@@ -404,6 +461,8 @@ private fun CommandCenterCard(state: AppState) {
     val openTasks = state.tasks.count { !it.completed }
     val upcomingEvents = state.events.count { !it.startsAt.toLocalDate().isBefore(today) }
     val todayNotes = state.notes.count { it.date == today }
+    val todayPay = PayEstimator.estimateDay(state, today)
+    val shiftStatus = todayShifts.firstOrNull()?.let { shift -> shiftStatusLine(now, shift) }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -426,6 +485,13 @@ private fun CommandCenterCard(state: AppState) {
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 style = MaterialTheme.typography.bodyLarge
             )
+            shiftStatus?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -434,6 +500,167 @@ private fun CommandCenterCard(state: AppState) {
                 AssistChip(onClick = {}, label = { Text("$openTasks open tasks") })
                 AssistChip(onClick = {}, label = { Text("$upcomingEvents upcoming events") })
                 AssistChip(onClick = {}, label = { Text("$todayNotes notes today") })
+                if (state.paySettings.hourlyRate > 0.0 && todayPay.paidHours > 0.0) {
+                    AssistChip(onClick = {}, label = { Text("$${todayPay.grossPay.toMoneyString()} today") })
+                    AssistChip(onClick = {}, label = { Text("${todayPay.paidHours.toSimpleString()} paid hrs") })
+                }
+            }
+        }
+    }
+}
+
+private fun shiftStatusLine(now: LocalDateTime, shift: WorkShift): String {
+    val start = LocalDateTime.of(shift.date, shift.start)
+    val end = LocalDateTime.of(shift.date, shift.end).let {
+        if (shift.end.isBefore(shift.start)) it.plusDays(1) else it
+    }
+    return when {
+        now.isBefore(start) -> "Starts in ${Duration.between(now, start).toFriendlyDuration()}"
+        now.isBefore(end) -> "In shift, ${Duration.between(now, end).toFriendlyDuration()} left"
+        else -> "Shift finished"
+    }
+}
+
+private fun Duration.toFriendlyDuration(): String {
+    val totalMinutes = toMinutes().coerceAtLeast(0)
+    val hours = totalMinutes / 60
+    val minutes = totalMinutes % 60
+    return when {
+        hours > 0 && minutes > 0 -> "${hours}h ${minutes}m"
+        hours > 0 -> "${hours}h"
+        else -> "${minutes}m"
+    }
+}
+
+@Composable
+private fun ScheduleRiskSection(risks: List<ScheduleRisk>) {
+    if (risks.isEmpty()) return
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Watch-outs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            risks.forEach { risk ->
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(risk.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    Text(risk.detail, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimecardSection(
+    state: AppState,
+    onClockIn: () -> Unit,
+    onStartLunch: () -> Unit,
+    onEndLunch: () -> Unit,
+    onClockOut: () -> Unit,
+    onSaveNote: (String) -> Unit
+) {
+    val today = LocalDate.now()
+    val entry = state.timecards.firstOrNull { it.date == today }
+    val summary = entry?.let { TimecardCalculator.summarize(it, state.paySettings) }
+    val weekSummary = TimecardCalculator.summarizeWeek(state, today)
+    val scheduled = PayEstimator.estimateDay(state, today)
+    var noteText by remember(entry?.id, entry?.note) { mutableStateOf(entry?.note.orEmpty()) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader("Personal timecard", "Track what you actually worked for your own records.")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onClockIn, enabled = entry?.clockIn == null) { Text("Clock in") }
+                OutlinedButton(onClick = onStartLunch, enabled = entry?.clockIn != null && entry.lunchStart == null && entry.clockOut == null) {
+                    Text("Lunch start")
+                }
+                OutlinedButton(onClick = onEndLunch, enabled = entry?.lunchStart != null && entry.lunchEnd == null && entry.clockOut == null) {
+                    Text("Lunch end")
+                }
+                Button(onClick = onClockOut, enabled = entry?.clockIn != null && entry.clockOut == null) { Text("Clock out") }
+            }
+            TimePunchRows(entry)
+            if (summary != null) {
+                Text(
+                    "Actual today: ${summary.paidHours.toSimpleString()} paid hrs" +
+                        if (state.paySettings.hourlyRate > 0.0) " / $${summary.grossPay.toMoneyString()}" else "",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                if (scheduled.paidHours > 0.0) {
+                    val delta = summary.paidHours - scheduled.paidHours
+                    Text(
+                        "Scheduled estimate: ${scheduled.paidHours.toSimpleString()} paid hrs (${delta.toSignedHours()} vs actual)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                Text("No actual time logged today.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(
+                "Actual this week: ${weekSummary.paidHours.toSimpleString()} paid hrs" +
+                    if (state.paySettings.hourlyRate > 0.0) " / $${weekSummary.grossPay.toMoneyString()}" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = noteText,
+                onValueChange = { noteText = it },
+                label = { Text("Missed punch or pay note") },
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedButton(onClick = { onSaveNote(noteText) }, modifier = Modifier.fillMaxWidth()) {
+                Text("Save timecard note")
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimePunchRows(entry: TimecardEntry?) {
+    val rows = listOf(
+        "In" to entry?.clockIn,
+        "Lunch start" to entry?.lunchStart,
+        "Lunch end" to entry?.lunchEnd,
+        "Out" to entry?.clockOut
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        rows.forEach { (label, value) ->
+            AssistChip(onClick = {}, label = { Text("$label: ${value?.format(timeFormatter) ?: "--"}") })
+        }
+    }
+}
+
+private fun Double.toSignedHours(): String {
+    return when {
+        this > 0.0 -> "+${toSimpleString()} hrs"
+        this < 0.0 -> "${toSimpleString()} hrs"
+        else -> "even"
+    }
+}
+
+@Composable
+private fun ChecklistTemplateSection(onAddChecklist: (String) -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionHeader("Checklist templates", "Add a work routine to today's tasks.")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                WorkChecklistTemplates.all.forEach { template ->
+                    OutlinedButton(onClick = { onAddChecklist(template.id) }) {
+                        Text(template.title)
+                    }
+                }
             }
         }
     }
@@ -579,6 +806,62 @@ private fun decodeWorkImage(path: String): android.graphics.Bitmap? {
         sampleSize *= 2
     }
     return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sampleSize })
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ManagerMessageSection() {
+    val context = LocalContext.current
+    var selectedType by remember { mutableStateOf(ManagerMessageType.ScheduleQuestion) }
+    var detail by remember { mutableStateOf("") }
+    var copied by remember { mutableStateOf(false) }
+    val message = ManagerMessageBuilder.build(selectedType, detail)
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader("Ask manager", "Build a clean message for schedule, pay, or coverage questions.")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ManagerMessageType.entries.forEach { type ->
+                    if (selectedType == type) {
+                        Button(onClick = { selectedType = type }) { Text(type.label) }
+                    } else {
+                        OutlinedButton(onClick = { selectedType = type }) { Text(type.label) }
+                    }
+                }
+            }
+            OutlinedTextField(
+                value = detail,
+                onValueChange = {
+                    detail = it
+                    copied = false
+                },
+                label = { Text("Details") },
+                placeholder = { Text("Friday 3-9 shift, July 12 off, lunch punch") },
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(message, modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
+            }
+            OutlinedButton(
+                onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Workday Planner message", message))
+                    copied = true
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (copied) "Copied" else "Copy message")
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -1121,6 +1404,111 @@ private fun StyleSection(
     }
 }
 
+@Composable
+private fun PayEstimateSection(
+    state: AppState,
+    onPaySettingsChanged: (PaySettings) -> Unit
+) {
+    val settings = state.paySettings
+    var hourlyRate by remember(settings.hourlyRate) { mutableStateOf(settings.hourlyRate.takeIf { it > 0.0 }?.toString() ?: "") }
+    var lunchMinutes by remember(settings.unpaidLunchMinutes) { mutableStateOf(settings.unpaidLunchMinutes.toString()) }
+    var overtimeThreshold by remember(settings.overtimeThresholdHours) { mutableStateOf(settings.overtimeThresholdHours.toSimpleString()) }
+    var overtimeMultiplier by remember(settings.overtimeMultiplier) { mutableStateOf(settings.overtimeMultiplier.toSimpleString()) }
+    val todayEstimate = PayEstimator.estimateDay(state)
+    val weekEstimate = PayEstimator.estimateWeek(state)
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Pay estimate", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Estimate gross pay from imported shifts. This is for planning, not payroll.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = hourlyRate,
+                    onValueChange = { hourlyRate = it },
+                    label = { Text("Hourly rate") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = lunchMinutes,
+                    onValueChange = { lunchMinutes = it },
+                    label = { Text("Lunch min") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = overtimeThreshold,
+                    onValueChange = { overtimeThreshold = it },
+                    label = { Text("OT hours") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = overtimeMultiplier,
+                    onValueChange = { overtimeMultiplier = it },
+                    label = { Text("OT x") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Button(
+                onClick = {
+                    onPaySettingsChanged(
+                        PaySettings(
+                            hourlyRate = hourlyRate.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+                            unpaidLunchMinutes = lunchMinutes.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+                            overtimeThresholdHours = overtimeThreshold.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 40.0,
+                            overtimeMultiplier = overtimeMultiplier.toDoubleOrNull()?.coerceAtLeast(1.0) ?: 1.5
+                        )
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Save pay settings")
+            }
+            PayEstimateLine("Today", todayEstimate.grossPay, todayEstimate.paidHours, todayEstimate.overtimeHours)
+            PayEstimateLine("This week", weekEstimate.grossPay, weekEstimate.paidHours, weekEstimate.overtimeHours)
+            val overtimeText = if (weekEstimate.overtimeHours > 0.0) {
+                "${weekEstimate.overtimeHours.toSimpleString()} overtime hours scheduled."
+            } else {
+                "${weekEstimate.hoursUntilOvertime.toSimpleString()} hours until overtime."
+            }
+            Text(overtimeText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun PayEstimateLine(label: String, grossPay: Double, paidHours: Double, overtimeHours: Double) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            Text(
+                "${paidHours.toSimpleString()} paid hours${if (overtimeHours > 0.0) ", ${overtimeHours.toSimpleString()} OT" else ""}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Text("$${grossPay.toMoneyString()}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+private fun Double.toSimpleString(): String {
+    return if (this % 1.0 == 0.0) toInt().toString() else String.format("%.1f", this)
+}
+
+private fun Double.toMoneyString(): String = String.format("%.2f", this)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CalendarSyncSection(
@@ -1231,6 +1619,7 @@ private fun ScheduleScreen(
     onDarkModeChanged: (Boolean) -> Unit,
     onAccentStyleChanged: (AccentStyle) -> Unit,
     onWidgetLayoutModeChanged: (WidgetLayoutMode) -> Unit,
+    onPaySettingsChanged: (PaySettings) -> Unit,
     calendars: List<DeviceCalendar>,
     calendarMessage: String?,
     onLoadCalendars: () -> Unit,
@@ -1250,6 +1639,10 @@ private fun ScheduleScreen(
             onDarkModeChanged = onDarkModeChanged,
             onAccentStyleChanged = onAccentStyleChanged,
             onWidgetLayoutModeChanged = onWidgetLayoutModeChanged
+        )
+        PayEstimateSection(
+            state = state,
+            onPaySettingsChanged = onPaySettingsChanged
         )
         CalendarSyncSection(
             state = state,
@@ -1567,7 +1960,7 @@ private fun EmptyState(title: String, body: String) {
 }
 
 private sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
-    data object Tasks : Screen("tasks", "Tasks", Icons.Default.CheckCircle)
+    data object Tasks : Screen("tasks", "Today", Icons.Default.CheckCircle)
     data object Notes : Screen("notes", "Notes", Icons.AutoMirrored.Filled.Notes)
     data object Schedule : Screen("schedule", "Schedule", Icons.Default.CalendarMonth)
     data object Import : Screen("import", "Import", Icons.Default.FileUpload)
