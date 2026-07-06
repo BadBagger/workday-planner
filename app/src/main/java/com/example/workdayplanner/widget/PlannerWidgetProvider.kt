@@ -1,13 +1,15 @@
 package com.example.workdayplanner.widget
 
+import android.app.AlarmManager
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
-import android.os.Bundle
-import android.view.View
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
+import android.view.View
 import android.widget.RemoteViews
 import com.example.workdayplanner.MainActivity
 import com.example.workdayplanner.R
@@ -15,6 +17,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 class PlannerWidgetProvider : AppWidgetProvider() {
@@ -22,6 +25,11 @@ class PlannerWidgetProvider : AppWidgetProvider() {
         appWidgetIds.forEach { widgetId ->
             appWidgetManager.updateAppWidget(widgetId, buildViews(context))
         }
+        PlannerWidgetUpdater.scheduleNextDateRefresh(context)
+    }
+
+    override fun onEnabled(context: Context) {
+        PlannerWidgetUpdater.scheduleNextDateRefresh(context)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -44,6 +52,11 @@ class WorkScheduleWidgetProvider : AppWidgetProvider() {
         appWidgetIds.forEach { widgetId ->
             appWidgetManager.updateAppWidget(widgetId, buildScheduleViews(context, widgetId, appWidgetManager))
         }
+        PlannerWidgetUpdater.scheduleNextDateRefresh(context)
+    }
+
+    override fun onEnabled(context: Context) {
+        PlannerWidgetUpdater.scheduleNextDateRefresh(context)
     }
 
     override fun onAppWidgetOptionsChanged(
@@ -56,13 +69,57 @@ class WorkScheduleWidgetProvider : AppWidgetProvider() {
     }
 }
 
+class WidgetRefreshReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        PlannerWidgetUpdater.updateAll(context)
+    }
+}
+
 object PlannerWidgetUpdater {
+    private const val ACTION_REFRESH_WIDGETS = "com.example.workdayplanner.widget.REFRESH_WIDGETS"
+    private const val MIDNIGHT_REFRESH_REQUEST = 7301
+
     fun updateAll(context: Context) {
         val manager = AppWidgetManager.getInstance(context)
         val plannerIds = manager.getAppWidgetIds(ComponentName(context, PlannerWidgetProvider::class.java))
         plannerIds.forEach { manager.updateAppWidget(it, buildViews(context)) }
         val scheduleIds = manager.getAppWidgetIds(ComponentName(context, WorkScheduleWidgetProvider::class.java))
         scheduleIds.forEach { manager.updateAppWidget(it, buildScheduleViews(context, it, manager)) }
+        if (plannerIds.isNotEmpty() || scheduleIds.isNotEmpty()) {
+            scheduleNextDateRefresh(context)
+        }
+    }
+
+    fun scheduleNextDateRefresh(context: Context) {
+        val manager = AppWidgetManager.getInstance(context)
+        val hasWidgets =
+            manager.getAppWidgetIds(ComponentName(context, PlannerWidgetProvider::class.java)).isNotEmpty() ||
+                manager.getAppWidgetIds(ComponentName(context, WorkScheduleWidgetProvider::class.java)).isNotEmpty()
+        if (!hasWidgets) return
+
+        val alarmManager = context.getSystemService(AlarmManager::class.java)
+        val pendingIntent = refreshPendingIntent(context)
+        val triggerAtMillis = LocalDate.now()
+            .plusDays(1)
+            .atStartOfDay(ZoneId.systemDefault())
+            .plusMinutes(1)
+            .toInstant()
+            .toEpochMilli()
+        try {
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC, triggerAtMillis, pendingIntent)
+        } catch (_: SecurityException) {
+            alarmManager.set(AlarmManager.RTC, triggerAtMillis, pendingIntent)
+        }
+    }
+
+    private fun refreshPendingIntent(context: Context): PendingIntent {
+        val intent = Intent(context, WidgetRefreshReceiver::class.java).setAction(ACTION_REFRESH_WIDGETS)
+        return PendingIntent.getBroadcast(
+            context,
+            MIDNIGHT_REFRESH_REQUEST,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 }
 
