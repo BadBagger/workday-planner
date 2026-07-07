@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -163,7 +164,7 @@ fun PlannerApp(
     val imageMessage by viewModel.imageMessage.collectAsStateWithLifecycle()
     val trainingImportState by viewModel.trainingImportState.collectAsStateWithLifecycle()
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
-    val topLevel = listOf(Screen.Tasks, Screen.Training, Screen.Notes, Screen.Schedule, Screen.Import)
+    val topLevel = listOf(Screen.Tasks, Screen.Training, Screen.Notes, Screen.Schedule, Screen.Settings)
 
     LaunchedEffect(requestedTaskId, state.tasks) {
         val taskId = requestedTaskId?.takeIf { id -> state.tasks.any { it.id == id } } ?: return@LaunchedEffect
@@ -183,6 +184,7 @@ fun PlannerApp(
                     currentRoute == Screen.Notes.route -> "Notes"
                     currentRoute == Screen.Schedule.route -> "Schedule"
                     currentRoute == Screen.Import.route -> "Import"
+                    currentRoute == Screen.Settings.route -> "Settings"
                     currentRoute == Screen.Tasks.route -> "Today"
                     else -> "Workday Planner"
                 }
@@ -201,7 +203,7 @@ fun PlannerApp(
                         },
                         icon = { Icon(screen.icon, contentDescription = screen.label) },
                         label = { Text(screen.label, maxLines = 1) },
-                        alwaysShowLabel = false
+                        alwaysShowLabel = true
                     )
                 }
             }
@@ -269,15 +271,7 @@ fun PlannerApp(
                     onAddDayOff = viewModel::addDayOff,
                     onRemoveDayOff = viewModel::removeDayOff,
                     onClearSchedule = viewModel::clearSchedule,
-                    onDarkModeChanged = viewModel::setDarkMode,
-                    onAccentStyleChanged = viewModel::setAccentStyle,
-                    onWidgetLayoutModeChanged = viewModel::setWidgetLayoutMode,
-                    onPaySettingsChanged = viewModel::setPaySettings,
-                    calendars = calendars,
-                    calendarMessage = calendarMessage,
-                    onLoadCalendars = viewModel::loadCalendars,
-                    onSelectCalendar = viewModel::setSelectedCalendar,
-                    onSyncCalendar = viewModel::syncShiftsToCalendar
+                    onImportSchedule = { navController.navigate(Screen.Import.route) }
                 )
             }
             composable(Screen.Import.route) {
@@ -292,6 +286,20 @@ fun PlannerApp(
                     onImagePicked = viewModel::recognizeScheduleImage,
                     onPreview = { viewModel.previewImport() },
                     onApply = viewModel::applyImport
+                )
+            }
+            composable(Screen.Settings.route) {
+                SettingsScreen(
+                    state = state,
+                    onDarkModeChanged = viewModel::setDarkMode,
+                    onAccentStyleChanged = viewModel::setAccentStyle,
+                    onWidgetLayoutModeChanged = viewModel::setWidgetLayoutMode,
+                    onPaySettingsChanged = viewModel::setPaySettings,
+                    calendars = calendars,
+                    calendarMessage = calendarMessage,
+                    onLoadCalendars = viewModel::loadCalendars,
+                    onSelectCalendar = viewModel::setSelectedCalendar,
+                    onSyncCalendar = viewModel::syncShiftsToCalendar
                 )
             }
             composable(
@@ -2190,7 +2198,12 @@ private fun StyleSection(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Style", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Current theme: ${state.accentStyle.label}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.weight(1f)) {
                     Text("Dark mode", style = MaterialTheme.typography.bodyLarge)
@@ -2527,15 +2540,7 @@ private fun ScheduleScreen(
     onAddDayOff: (LocalDate) -> Unit,
     onRemoveDayOff: (LocalDate) -> Unit,
     onClearSchedule: () -> Unit,
-    onDarkModeChanged: (Boolean) -> Unit,
-    onAccentStyleChanged: (AccentStyle) -> Unit,
-    onWidgetLayoutModeChanged: (WidgetLayoutMode) -> Unit,
-    onPaySettingsChanged: (PaySettings) -> Unit,
-    calendars: List<DeviceCalendar>,
-    calendarMessage: String?,
-    onLoadCalendars: () -> Unit,
-    onSelectCalendar: (Long?) -> Unit,
-    onSyncCalendar: () -> Unit
+    onImportSchedule: () -> Unit
 ) {
     var dayOffText by remember { mutableStateOf(LocalDate.now().toString()) }
     var invalidDate by remember { mutableStateOf(false) }
@@ -2545,29 +2550,19 @@ private fun ScheduleScreen(
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         ScheduleHero(state = state)
-        StyleSection(
-            state = state,
-            onDarkModeChanged = onDarkModeChanged,
-            onAccentStyleChanged = onAccentStyleChanged,
-            onWidgetLayoutModeChanged = onWidgetLayoutModeChanged
-        )
-        PayEstimateSection(
-            state = state,
-            onPaySettingsChanged = onPaySettingsChanged
-        )
-        CalendarSyncSection(
-            state = state,
-            calendars = calendars,
-            message = calendarMessage,
-            onLoadCalendars = onLoadCalendars,
-            onSelectCalendar = onSelectCalendar,
-            onSyncCalendar = onSyncCalendar
-        )
-        OutlinedButton(
-            onClick = onClearSchedule,
-            enabled = state.shifts.isNotEmpty() || state.daysOff.isNotEmpty()
-        ) {
-            Text("Clear imported schedule data")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = onImportSchedule, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Default.FileUpload, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Import")
+            }
+            OutlinedButton(
+                onClick = onClearSchedule,
+                enabled = state.shifts.isNotEmpty() || state.daysOff.isNotEmpty(),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Clear")
+            }
         }
         WeekCalendar(state = state)
         Text("Days off", style = MaterialTheme.typography.titleMedium)
@@ -2597,6 +2592,44 @@ private fun ScheduleScreen(
         }
         Divider()
         Text("Default days off: ${state.defaultDaysOff.sortedBy(DayOfWeek::getValue).joinToString { it.name.lowercase().replaceFirstChar(Char::uppercase) }}")
+    }
+}
+
+@Composable
+private fun SettingsScreen(
+    state: AppState,
+    onDarkModeChanged: (Boolean) -> Unit,
+    onAccentStyleChanged: (AccentStyle) -> Unit,
+    onWidgetLayoutModeChanged: (WidgetLayoutMode) -> Unit,
+    onPaySettingsChanged: (PaySettings) -> Unit,
+    calendars: List<DeviceCalendar>,
+    calendarMessage: String?,
+    onLoadCalendars: () -> Unit,
+    onSelectCalendar: (Long?) -> Unit,
+    onSyncCalendar: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
+        verticalArrangement = Arrangement.spacedBy(sectionGap)
+    ) {
+        StyleSection(
+            state = state,
+            onDarkModeChanged = onDarkModeChanged,
+            onAccentStyleChanged = onAccentStyleChanged,
+            onWidgetLayoutModeChanged = onWidgetLayoutModeChanged
+        )
+        PayEstimateSection(
+            state = state,
+            onPaySettingsChanged = onPaySettingsChanged
+        )
+        CalendarSyncSection(
+            state = state,
+            calendars = calendars,
+            message = calendarMessage,
+            onLoadCalendars = onLoadCalendars,
+            onSelectCalendar = onSelectCalendar,
+            onSyncCalendar = onSyncCalendar
+        )
     }
 }
 
@@ -2876,6 +2909,7 @@ private sealed class Screen(val route: String, val label: String, val icon: Imag
     data object Notes : Screen("notes", "Notes", Icons.AutoMirrored.Filled.Notes)
     data object Schedule : Screen("schedule", "Schedule", Icons.Default.CalendarMonth)
     data object Import : Screen("import", "Import", Icons.Default.FileUpload)
+    data object Settings : Screen("settings", "Settings", Icons.Default.Settings)
     data object TaskDetail : Screen("task", "Task", Icons.Default.CheckCircle)
     data object EventDetail : Screen("event", "Event", Icons.Default.Event)
 }

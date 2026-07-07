@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 48
-        versionName = "2.28-logo-theme"
+        versionCode = 49
+        versionName = "2.29-settings-tab"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
