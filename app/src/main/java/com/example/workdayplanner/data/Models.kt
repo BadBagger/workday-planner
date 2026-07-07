@@ -117,7 +117,9 @@ data class PaySettings(
     val hourlyRate: Double = 0.0,
     val unpaidLunchMinutes: Int = 30,
     val overtimeThresholdHours: Double = 40.0,
-    val overtimeMultiplier: Double = 1.5
+    val overtimeMultiplier: Double = 1.5,
+    val estimatedTaxRate: Double = 18.0,
+    val estimatedDeductionRate: Double = 5.0
 )
 
 data class TimecardEntry(

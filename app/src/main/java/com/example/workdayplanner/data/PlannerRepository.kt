@@ -294,12 +294,16 @@ class PlannerRepository(context: Context) {
         .put("unpaidLunchMinutes", settings.unpaidLunchMinutes)
         .put("overtimeThresholdHours", settings.overtimeThresholdHours)
         .put("overtimeMultiplier", settings.overtimeMultiplier)
+        .put("estimatedTaxRate", settings.estimatedTaxRate)
+        .put("estimatedDeductionRate", settings.estimatedDeductionRate)
 
     private fun paySettingsFromJson(json: JSONObject) = PaySettings(
         hourlyRate = json.optDouble("hourlyRate", 0.0),
         unpaidLunchMinutes = json.optInt("unpaidLunchMinutes", 30).coerceAtLeast(0),
         overtimeThresholdHours = json.optDouble("overtimeThresholdHours", 40.0).coerceAtLeast(0.0),
-        overtimeMultiplier = json.optDouble("overtimeMultiplier", 1.5).coerceAtLeast(1.0)
+        overtimeMultiplier = json.optDouble("overtimeMultiplier", 1.5).coerceAtLeast(1.0),
+        estimatedTaxRate = json.optDouble("estimatedTaxRate", 18.0).coerceIn(0.0, 100.0),
+        estimatedDeductionRate = json.optDouble("estimatedDeductionRate", 5.0).coerceIn(0.0, 100.0)
     )
 
     private fun timecardToJson(entry: TimecardEntry) = JSONObject()

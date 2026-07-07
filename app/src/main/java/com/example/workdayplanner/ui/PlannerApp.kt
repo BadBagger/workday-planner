@@ -1,9 +1,6 @@
 package com.example.workdayplanner.ui
 
 import android.Manifest
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Intent
@@ -97,8 +94,6 @@ import com.example.workdayplanner.TrainingImportUiState
 import com.example.workdayplanner.calendar.DeviceCalendar
 import com.example.workdayplanner.data.AccentStyle
 import com.example.workdayplanner.data.AppState
-import com.example.workdayplanner.data.ManagerMessageBuilder
-import com.example.workdayplanner.data.ManagerMessageType
 import com.example.workdayplanner.data.RepeatRule
 import com.example.workdayplanner.data.TaskItem
 import com.example.workdayplanner.data.TaskCategory
@@ -141,6 +136,16 @@ private enum class TaskView(val label: String) {
     Important("Important"),
     Overdue("Overdue"),
     Deadline("Deadline"),
+    All("All")
+}
+
+private enum class TrainingView(val label: String) {
+    Open("Open"),
+    Associates("Associates"),
+    Overdue("Overdue"),
+    DueSoon("Due soon"),
+    NoDate("No date"),
+    Completed("Completed"),
     All("All")
 }
 
@@ -195,7 +200,8 @@ fun PlannerApp(
                             }
                         },
                         icon = { Icon(screen.icon, contentDescription = screen.label) },
-                        label = { Text(screen.label) }
+                        label = { Text(screen.label, maxLines = 1) },
+                        alwaysShowLabel = false
                     )
                 }
             }
@@ -250,8 +256,11 @@ fun PlannerApp(
                     onRecognizeImage = viewModel::recognizeTrainingImage,
                     onTextChanged = viewModel::setTrainingImportText,
                     onImport = viewModel::importTrainingItems,
+                    onAddManual = viewModel::addManualTrainingItem,
                     onToggleComplete = viewModel::toggleTrainingComplete,
-                    onDelete = viewModel::deleteTrainingItem
+                    onDelete = viewModel::deleteTrainingItem,
+                    onCreateTask = viewModel::createTaskFromTrainingItem,
+                    onCreateFollowUps = viewModel::createTrainingFollowUpTasks
                 )
             }
             composable(Screen.Schedule.route) {
@@ -716,18 +725,31 @@ private fun TrainingScreen(
     onRecognizeImage: (Uri) -> Unit,
     onTextChanged: (String) -> Unit,
     onImport: () -> Unit,
+    onAddManual: (String, String, LocalDate?) -> Unit,
     onToggleComplete: (String) -> Unit,
-    onDelete: (String) -> Unit
+    onDelete: (String) -> Unit,
+    onCreateTask: (String) -> Unit,
+    onCreateFollowUps: () -> Unit
 ) {
     val today = LocalDate.now()
     var searchText by remember { mutableStateOf("") }
-    var showCompleted by remember { mutableStateOf(false) }
+    var trainingView by remember { mutableStateOf(TrainingView.Open) }
     val openItems = state.trainingItems.filter { it.completedAt == null }
     val overdue = openItems.count { it.dueDate?.isBefore(today) == true }
     val dueSoon = openItems.count { it.dueDate?.let { due -> !due.isBefore(today) && !due.isAfter(today.plusDays(7)) } == true }
     val noDate = openItems.count { it.dueDate == null }
     val filteredItems = state.trainingItems
-        .filter { showCompleted || it.completedAt == null }
+        .filter { item ->
+            when (trainingView) {
+                TrainingView.Open -> item.completedAt == null
+                TrainingView.Associates -> item.completedAt == null
+                TrainingView.Overdue -> item.completedAt == null && item.dueDate?.isBefore(today) == true
+                TrainingView.DueSoon -> item.completedAt == null && item.dueDate?.let { due -> !due.isBefore(today) && !due.isAfter(today.plusDays(7)) } == true
+                TrainingView.NoDate -> item.completedAt == null && item.dueDate == null
+                TrainingView.Completed -> item.completedAt != null
+                TrainingView.All -> true
+            }
+        }
         .filter { item ->
             searchText.isBlank() ||
                 item.associateName.contains(searchText, ignoreCase = true) ||
@@ -735,14 +757,19 @@ private fun TrainingScreen(
                 item.sourceText.contains(searchText, ignoreCase = true)
         }
         .sortedWith(compareBy<TrainingItem> { it.completedAt != null }.thenBy { it.dueDate ?: LocalDate.MAX }.thenBy { it.associateName })
+    val associateGroups = filteredItems
+        .groupBy { it.associateName }
+        .map { (associate, items) -> TrainingAssociateGroup(associate, items) }
+        .sortedWith(compareByDescending<TrainingAssociateGroup> { it.overdueCount }.thenByDescending { it.dueSoonCount }.thenBy { it.nextDue ?: LocalDate.MAX }.thenBy { it.name })
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         item {
-            TrainingImportCard(
+            AddTrainingCard(
                 importState = importState,
+                onAddManual = onAddManual,
                 onRecognizeImage = onRecognizeImage,
                 onTextChanged = onTextChanged,
                 onImport = onImport
@@ -753,7 +780,8 @@ private fun TrainingScreen(
                 openCount = openItems.size,
                 overdueCount = overdue,
                 dueSoonCount = dueSoon,
-                noDateCount = noDate
+                noDateCount = noDate,
+                onCreateFollowUps = onCreateFollowUps
             )
         }
         item {
@@ -762,7 +790,20 @@ private fun TrainingScreen(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Training database", "Search associates, modules, or OCR text.")
+                    SectionHeader("Training queue", "Filter the list, then search within the current view.")
+                    TrainingViewSelector(
+                        selected = trainingView,
+                        counts = mapOf(
+                            TrainingView.Open to openItems.size,
+                            TrainingView.Associates to openItems.map { it.associateName.lowercase() }.distinct().size,
+                            TrainingView.Overdue to overdue,
+                            TrainingView.DueSoon to dueSoon,
+                            TrainingView.NoDate to noDate,
+                            TrainingView.Completed to state.trainingItems.count { it.completedAt != null },
+                            TrainingView.All to state.trainingItems.size
+                        ),
+                        onSelected = { trainingView = it }
+                    )
                     OutlinedTextField(
                         value = searchText,
                         onValueChange = { searchText = it },
@@ -771,11 +812,6 @@ private fun TrainingScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(checked = showCompleted, onCheckedChange = { showCompleted = it })
-                        Spacer(Modifier.width(8.dp))
-                        Text("Show completed")
-                    }
                 }
             }
         }
@@ -786,12 +822,17 @@ private fun TrainingScreen(
                     body = "Take a photo of the training printout or paste OCR text to build the list."
                 )
             }
+        } else if (trainingView == TrainingView.Associates) {
+            items(associateGroups, key = { it.name }) { group ->
+                TrainingAssociateCard(group = group, today = today)
+            }
         } else {
             items(filteredItems, key = { it.id }) { item ->
                 TrainingItemCard(
                     item = item,
                     today = today,
                     onToggleComplete = { onToggleComplete(item.id) },
+                    onCreateTask = { onCreateTask(item.id) },
                     onDelete = { onDelete(item.id) }
                 )
             }
@@ -799,13 +840,121 @@ private fun TrainingScreen(
     }
 }
 
+private data class TrainingAssociateGroup(
+    val name: String,
+    val items: List<TrainingItem>
+) {
+    val openCount: Int = items.count { it.completedAt == null }
+    val completedCount: Int = items.count { it.completedAt != null }
+    val overdueCount: Int = items.count { it.completedAt == null && it.dueDate?.isBefore(LocalDate.now()) == true }
+    val dueSoonCount: Int = items.count {
+        it.completedAt == null && it.dueDate?.let { due -> !due.isBefore(LocalDate.now()) && !due.isAfter(LocalDate.now().plusDays(7)) } == true
+    }
+    val nextItem: TrainingItem? = items
+        .filter { it.completedAt == null }
+        .minByOrNull { it.dueDate ?: LocalDate.MAX }
+    val nextDue: LocalDate? = nextItem?.dueDate
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TrainingImportCard(
+private fun TrainingAssociateCard(group: TrainingAssociateGroup, today: LocalDate) {
+    val statusColor = when {
+        group.overdueCount > 0 -> Color(0xFFFF5A66)
+        group.dueSoonCount > 0 -> Color(0xFFFFB020)
+        else -> MaterialTheme.colorScheme.primary
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.45f))
+    ) {
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            Box(Modifier.width(5.dp).fillMaxHeight().background(statusColor))
+            Column(Modifier.padding(14.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(group.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                group.nextItem?.let { item ->
+                    Text(
+                        "Next: ${item.trainingTitle}${item.dueDate?.let { " due ${it.format(dateFormatter)}" }.orEmpty()}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AssistChip(onClick = {}, label = { Text("${group.openCount} open") })
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("${group.overdueCount} overdue") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = Color(0xFFFF5A66).copy(alpha = 0.16f),
+                            labelColor = Color(0xFFFF5A66)
+                        )
+                    )
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("${group.dueSoonCount} due soon") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = Color(0xFFFFB020).copy(alpha = 0.16f),
+                            labelColor = Color(0xFFFFB020)
+                        )
+                    )
+                    if (group.completedCount > 0) AssistChip(onClick = {}, label = { Text("${group.completedCount} done") })
+                }
+                group.items
+                    .filter { it.completedAt == null }
+                    .sortedBy { it.dueDate ?: LocalDate.MAX }
+                    .take(3)
+                    .forEach { item ->
+                        Text(
+                            "${item.trainingTitle}${item.dueDate?.let { " - ${trainingDueLabel(it, today)}" }.orEmpty()}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TrainingViewSelector(
+    selected: TrainingView,
+    counts: Map<TrainingView, Int>,
+    onSelected: (TrainingView) -> Unit
+) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        TrainingView.entries.forEach { view ->
+            val label = "${view.label} ${counts[view] ?: 0}"
+            if (view == selected) {
+                Button(onClick = { onSelected(view) }) { Text(label) }
+            } else {
+                OutlinedButton(onClick = { onSelected(view) }) { Text(label) }
+            }
+        }
+    }
+}
+
+private fun trainingDueLabel(dueDate: LocalDate, today: LocalDate): String = when {
+    dueDate.isBefore(today) -> "overdue ${dueDate.format(dateFormatter)}"
+    dueDate == today -> "due today"
+    dueDate == today.plusDays(1) -> "due tomorrow"
+    else -> "due ${dueDate.format(dateFormatter)}"
+}
+
+@Composable
+private fun AddTrainingCard(
     importState: TrainingImportUiState,
+    onAddManual: (String, String, LocalDate?) -> Unit,
     onRecognizeImage: (Uri) -> Unit,
     onTextChanged: (String) -> Unit,
     onImport: () -> Unit
 ) {
+    var mode by remember { mutableStateOf("manual") }
+    var associateName by remember { mutableStateOf("") }
+    var trainingTitle by remember { mutableStateOf("") }
+    var dueDate by remember { mutableStateOf<LocalDate?>(LocalDate.now().plusDays(7)) }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let(onRecognizeImage)
     }
@@ -814,50 +963,108 @@ private fun TrainingImportCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SectionHeader("Import training printout", "Photo OCR builds an associate training list.")
-            OutlinedButton(
-                onClick = { imagePicker.launch("image/*") },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.FileUpload, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (importState.isReadingImage) "Reading photo..." else "Take or choose printout photo")
-            }
-            OutlinedTextField(
-                value = importState.rawText,
-                onValueChange = onTextChanged,
-                label = { Text("Detected training text") },
-                minLines = 4,
-                modifier = Modifier.fillMaxWidth()
-            )
-            importState.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-            importState.message?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall) }
-            if (importState.parsedItems.isNotEmpty()) {
-                Text("${importState.parsedItems.size} rows ready to import", style = MaterialTheme.typography.labelLarge)
-                importState.parsedItems.take(3).forEach { item ->
-                    Text(
-                        "${item.associateName} - ${item.trainingTitle}${item.dueDate?.let { " - due ${it.format(dateFormatter)}" }.orEmpty()}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+            SectionHeader("Add training", "Enter one item or scan a printed training list.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                if (mode == "manual") {
+                    Button(onClick = { mode = "manual" }, modifier = Modifier.weight(1f)) { Text("Manual") }
+                } else {
+                    OutlinedButton(onClick = { mode = "manual" }, modifier = Modifier.weight(1f)) { Text("Manual") }
+                }
+                if (mode == "photo") {
+                    Button(onClick = { mode = "photo" }, modifier = Modifier.weight(1f)) { Text("Photo") }
+                } else {
+                    OutlinedButton(onClick = { mode = "photo" }, modifier = Modifier.weight(1f)) { Text("Photo") }
                 }
             }
-            Button(
-                onClick = onImport,
-                enabled = importState.parsedItems.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Import training rows")
+            if (mode == "manual") {
+                OutlinedTextField(
+                    value = associateName,
+                    onValueChange = { associateName = it },
+                    label = { Text("Associate name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = trainingTitle,
+                    onValueChange = { trainingTitle = it },
+                    label = { Text("Training title") },
+                    placeholder = { Text("CBT Food Safety") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                DateOnlyRow(
+                    label = "Due date",
+                    value = dueDate,
+                    onChanged = { dueDate = it }
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { dueDate = null }, modifier = Modifier.weight(1f)) {
+                        Text("No date")
+                    }
+                    Button(
+                        onClick = {
+                            onAddManual(associateName, trainingTitle, dueDate)
+                            associateName = ""
+                            trainingTitle = ""
+                            dueDate = LocalDate.now().plusDays(7)
+                        },
+                        enabled = associateName.isNotBlank() && trainingTitle.isNotBlank(),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Add")
+                    }
+                }
+            } else {
+                OutlinedButton(
+                    onClick = { imagePicker.launch("image/*") },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.FileUpload, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (importState.isReadingImage) "Reading photo..." else "Take or choose printout photo")
+                }
+                OutlinedTextField(
+                    value = importState.rawText,
+                    onValueChange = onTextChanged,
+                    label = { Text("Detected training text") },
+                    minLines = 4,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (importState.parsedItems.isNotEmpty()) {
+                    Text("${importState.parsedItems.size} rows ready to import", style = MaterialTheme.typography.labelLarge)
+                    importState.parsedItems.take(3).forEach { item ->
+                        Text(
+                            "${item.associateName} - ${item.trainingTitle}${item.dueDate?.let { " - due ${it.format(dateFormatter)}" }.orEmpty()}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Button(
+                    onClick = onImport,
+                    enabled = importState.parsedItems.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Import training rows")
+                }
             }
+            importState.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            importState.message?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TrainingSummaryCard(openCount: Int, overdueCount: Int, dueSoonCount: Int, noDateCount: Int) {
+private fun TrainingSummaryCard(
+    openCount: Int,
+    overdueCount: Int,
+    dueSoonCount: Int,
+    noDateCount: Int,
+    onCreateFollowUps: () -> Unit
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
@@ -884,6 +1091,15 @@ private fun TrainingSummaryCard(openCount: Int, overdueCount: Int, dueSoonCount:
                 )
                 AssistChip(onClick = {}, label = { Text("$noDateCount no date") })
             }
+            OutlinedButton(
+                onClick = onCreateFollowUps,
+                enabled = openCount > 0,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Add follow-up tasks")
+            }
         }
     }
 }
@@ -894,6 +1110,7 @@ private fun TrainingItemCard(
     item: TrainingItem,
     today: LocalDate,
     onToggleComplete: () -> Unit,
+    onCreateTask: () -> Unit,
     onDelete: () -> Unit
 ) {
     val statusColor = when {
@@ -941,6 +1158,11 @@ private fun TrainingItemCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                OutlinedButton(onClick = onCreateTask, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Make follow-up task")
+                }
             }
         }
     }
@@ -972,9 +1194,6 @@ private fun NotesScreen(
                 onAddImage = onAddImage,
                 onDeleteImage = onDeleteImage
             )
-        }
-        item {
-            ManagerMessageSection()
         }
         item {
             DailyNotesSection(
@@ -1345,62 +1564,6 @@ private fun decodeWorkImage(path: String): android.graphics.Bitmap? {
         sampleSize *= 2
     }
     return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sampleSize })
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun ManagerMessageSection() {
-    val context = LocalContext.current
-    var selectedType by remember { mutableStateOf(ManagerMessageType.ScheduleQuestion) }
-    var detail by remember { mutableStateOf("") }
-    var copied by remember { mutableStateOf(false) }
-    val message = ManagerMessageBuilder.build(selectedType, detail)
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SectionHeader("Ask manager", "Build a clean message for schedule, pay, or coverage questions.")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ManagerMessageType.entries.forEach { type ->
-                    if (selectedType == type) {
-                        Button(onClick = { selectedType = type }) { Text(type.label) }
-                    } else {
-                        OutlinedButton(onClick = { selectedType = type }) { Text(type.label) }
-                    }
-                }
-            }
-            OutlinedTextField(
-                value = detail,
-                onValueChange = {
-                    detail = it
-                    copied = false
-                },
-                label = { Text("Details") },
-                placeholder = { Text("Friday 3-9 shift, July 12 off, lunch punch") },
-                minLines = 2,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(message, modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
-            }
-            OutlinedButton(
-                onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Workday Planner message", message))
-                    copied = true
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(if (copied) "Copied" else "Copy message")
-            }
-        }
-    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -1931,6 +2094,31 @@ private fun DateTimeRow(label: String, value: LocalDateTime, onChanged: (LocalDa
     }
 }
 
+@Composable
+private fun DateOnlyRow(label: String, value: LocalDate?, onChanged: (LocalDate) -> Unit) {
+    val context = LocalContext.current
+    val pickerDate = value ?: LocalDate.now()
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.labelLarge)
+            Text(value?.format(dateFormatter) ?: "No due date", style = MaterialTheme.typography.bodyLarge)
+        }
+        OutlinedButton(onClick = {
+            DatePickerDialog(
+                context,
+                { _, year, month, day ->
+                    onChanged(LocalDate.of(year, month + 1, day))
+                },
+                pickerDate.year,
+                pickerDate.monthValue - 1,
+                pickerDate.dayOfMonth
+            ).show()
+        }) {
+            Text("Date")
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RepeatRuleDropdown(selected: RepeatRule, onSelected: (RepeatRule) -> Unit) {
@@ -2060,8 +2248,13 @@ private fun PayEstimateSection(
     var lunchMinutes by remember(settings.unpaidLunchMinutes) { mutableStateOf(settings.unpaidLunchMinutes.toString()) }
     var overtimeThreshold by remember(settings.overtimeThresholdHours) { mutableStateOf(settings.overtimeThresholdHours.toSimpleString()) }
     var overtimeMultiplier by remember(settings.overtimeMultiplier) { mutableStateOf(settings.overtimeMultiplier.toSimpleString()) }
+    var estimatedTaxRate by remember(settings.estimatedTaxRate) { mutableStateOf(settings.estimatedTaxRate.toSimpleString()) }
+    var estimatedDeductionRate by remember(settings.estimatedDeductionRate) { mutableStateOf(settings.estimatedDeductionRate.toSimpleString()) }
     val todayEstimate = PayEstimator.estimateDay(state)
     val weekEstimate = PayEstimator.estimateWeek(state)
+    val weekTax = weekEstimate.grossPay * (settings.estimatedTaxRate / 100.0)
+    val weekDeductions = weekEstimate.grossPay * (settings.estimatedDeductionRate / 100.0)
+    val weekNet = (weekEstimate.grossPay - weekTax - weekDeductions).coerceAtLeast(0.0)
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -2071,7 +2264,7 @@ private fun PayEstimateSection(
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Pay estimate", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "Estimate gross pay from imported shifts. This is for planning, not payroll.",
+                "Estimate pay from imported shifts. This is for planning, not payroll.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -2107,6 +2300,22 @@ private fun PayEstimateSection(
                     modifier = Modifier.weight(1f)
                 )
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = estimatedTaxRate,
+                    onValueChange = { estimatedTaxRate = it },
+                    label = { Text("Tax %") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = estimatedDeductionRate,
+                    onValueChange = { estimatedDeductionRate = it },
+                    label = { Text("Deduct %") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
             Button(
                 onClick = {
                     onPaySettingsChanged(
@@ -2114,7 +2323,9 @@ private fun PayEstimateSection(
                             hourlyRate = hourlyRate.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
                             unpaidLunchMinutes = lunchMinutes.toIntOrNull()?.coerceAtLeast(0) ?: 0,
                             overtimeThresholdHours = overtimeThreshold.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 40.0,
-                            overtimeMultiplier = overtimeMultiplier.toDoubleOrNull()?.coerceAtLeast(1.0) ?: 1.5
+                            overtimeMultiplier = overtimeMultiplier.toDoubleOrNull()?.coerceAtLeast(1.0) ?: 1.5,
+                            estimatedTaxRate = estimatedTaxRate.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 18.0,
+                            estimatedDeductionRate = estimatedDeductionRate.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 5.0
                         )
                     )
                 },
@@ -2124,6 +2335,15 @@ private fun PayEstimateSection(
             }
             PayEstimateLine("Today", todayEstimate.grossPay, todayEstimate.paidHours, todayEstimate.overtimeHours)
             PayEstimateLine("This week", weekEstimate.grossPay, weekEstimate.paidHours, weekEstimate.overtimeHours)
+            EarningsSummaryCard(
+                grossPay = weekEstimate.grossPay,
+                tax = weekTax,
+                deductions = weekDeductions,
+                netPay = weekNet,
+                regularHours = weekEstimate.regularHours,
+                overtimeHours = weekEstimate.overtimeHours,
+                paidHours = weekEstimate.paidHours
+            )
             val overtimeText = if (weekEstimate.overtimeHours > 0.0) {
                 "${weekEstimate.overtimeHours.toSimpleString()} overtime hours scheduled."
             } else {
@@ -2131,6 +2351,51 @@ private fun PayEstimateSection(
             }
             Text(overtimeText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+@Composable
+private fun EarningsSummaryCard(
+    grossPay: Double,
+    tax: Double,
+    deductions: Double,
+    netPay: Double,
+    regularHours: Double,
+    overtimeHours: Double,
+    paidHours: Double
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Earnings summary", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            PayBreakdownLine("Gross earnings", grossPay, MaterialTheme.colorScheme.primary)
+            PayBreakdownLine("Estimated taxes", tax, Color(0xFF54D17A))
+            PayBreakdownLine("Estimated deductions", deductions, Color(0xFFB18CFF))
+            Divider()
+            PayBreakdownLine("Estimated net pay", netPay, Color(0xFF4DB6FF), emphasized = true)
+            Text(
+                "Hours: ${paidHours.toSimpleString()} paid / ${regularHours.toSimpleString()} regular" +
+                    if (overtimeHours > 0.0) " / ${overtimeHours.toSimpleString()} OT" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun PayBreakdownLine(label: String, amount: Double, color: Color, emphasized: Boolean = false) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Box(Modifier.width(10.dp).height(10.dp).background(color))
+        Spacer(Modifier.width(8.dp))
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Text(
+            "$${amount.toMoneyString()}",
+            style = if (emphasized) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium,
+            fontWeight = if (emphasized) FontWeight.SemiBold else FontWeight.Normal
+        )
     }
 }
 
@@ -2607,7 +2872,7 @@ private fun EmptyState(title: String, body: String) {
 
 private sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     data object Tasks : Screen("tasks", "Today", Icons.Default.CheckCircle)
-    data object Training : Screen("training", "Training", Icons.Default.CheckCircle)
+    data object Training : Screen("training", "Train", Icons.Default.CheckCircle)
     data object Notes : Screen("notes", "Notes", Icons.AutoMirrored.Filled.Notes)
     data object Schedule : Screen("schedule", "Schedule", Icons.Default.CalendarMonth)
     data object Import : Screen("import", "Import", Icons.Default.FileUpload)

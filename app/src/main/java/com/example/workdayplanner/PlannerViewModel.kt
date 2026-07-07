@@ -18,6 +18,7 @@ import com.example.workdayplanner.data.ScheduleChangeSet
 import com.example.workdayplanner.data.TaskItem
 import com.example.workdayplanner.data.TaskRecurrence
 import com.example.workdayplanner.data.TaskCategory
+import com.example.workdayplanner.data.TaskPriority
 import com.example.workdayplanner.data.TimecardEntry
 import com.example.workdayplanner.data.TrainingItem
 import com.example.workdayplanner.data.TrainingTextParser
@@ -188,12 +189,51 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
+    fun addManualTrainingItem(associateName: String, trainingTitle: String, dueDate: LocalDate?) {
+        if (associateName.isBlank() || trainingTitle.isBlank()) {
+            mutableTrainingImportState.value = mutableTrainingImportState.value.copy(error = "Associate and training title are required.")
+            return
+        }
+        repository.addTrainingItems(
+            listOf(
+                TrainingItem(
+                    associateName = associateName.trim(),
+                    trainingTitle = trainingTitle.trim(),
+                    dueDate = dueDate,
+                    sourceText = "Manual entry"
+                )
+            )
+        )
+        mutableTrainingImportState.value = mutableTrainingImportState.value.copy(
+            message = "Added training for ${associateName.trim()}.",
+            error = null
+        )
+    }
+
     fun toggleTrainingComplete(trainingId: String) {
         repository.toggleTrainingComplete(trainingId)
     }
 
     fun deleteTrainingItem(trainingId: String) {
         repository.deleteTrainingItem(trainingId)
+    }
+
+    fun createTaskFromTrainingItem(trainingId: String) {
+        val item = state.value.trainingItems.firstOrNull { it.id == trainingId } ?: return
+        saveTask(item.toTrainingTask())
+    }
+
+    fun createTrainingFollowUpTasks() {
+        val today = LocalDate.now()
+        val existingTitles = state.value.tasks.map { it.title.lowercase() }.toSet()
+        state.value.trainingItems
+            .filter { it.completedAt == null }
+            .filter { item -> item.dueDate == null || !item.dueDate.isAfter(today.plusDays(7)) }
+            .sortedWith(compareBy<TrainingItem> { it.dueDate ?: LocalDate.MAX }.thenBy { it.associateName })
+            .take(10)
+            .map { it.toTrainingTask() }
+            .filterNot { it.title.lowercase() in existingTitles }
+            .forEach(::saveTask)
     }
 
     fun saveEvent(event: WorkEvent) {
@@ -396,6 +436,28 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         val left: Int,
         val centerY: Int,
         val height: Int
+    )
+}
+
+private fun TrainingItem.toTrainingTask(): TaskItem {
+    val today = LocalDate.now()
+    val due = dueDate ?: today.plusDays(1)
+    val priority = when {
+        dueDate?.isBefore(today) == true -> TaskPriority.Critical
+        dueDate?.let { !it.isAfter(today.plusDays(3)) } == true -> TaskPriority.High
+        else -> TaskPriority.Normal
+    }
+    return TaskItem(
+        title = "Training: $associateName - $trainingTitle",
+        notes = buildString {
+            append("Associate training follow-up.")
+            dueDate?.let { append("\nDue: $it") }
+            if (sourceText.isNotBlank()) append("\nSource: $sourceText")
+        },
+        category = TaskCategory.Admin,
+        priority = priority,
+        deadline = due.atTime(9, 0),
+        alarmAt = due.atTime(8, 30)
     )
 }
 
