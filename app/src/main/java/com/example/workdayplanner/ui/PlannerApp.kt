@@ -164,7 +164,7 @@ fun PlannerApp(
     val imageMessage by viewModel.imageMessage.collectAsStateWithLifecycle()
     val trainingImportState by viewModel.trainingImportState.collectAsStateWithLifecycle()
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
-    val topLevel = listOf(Screen.Tasks, Screen.Training, Screen.Notes, Screen.Schedule, Screen.Settings)
+    val topLevel = listOf(Screen.Tasks, Screen.Notes, Screen.Schedule, Screen.Manager, Screen.Settings)
 
     LaunchedEffect(requestedTaskId, state.tasks) {
         val taskId = requestedTaskId?.takeIf { id -> state.tasks.any { it.id == id } } ?: return@LaunchedEffect
@@ -180,7 +180,7 @@ fun PlannerApp(
                 title = when {
                     currentRoute.startsWith(Screen.TaskDetail.route) -> "Task"
                     currentRoute.startsWith(Screen.EventDetail.route) -> "Event"
-                    currentRoute == Screen.Training.route -> "Training"
+                    currentRoute == Screen.Manager.route -> "Manager"
                     currentRoute == Screen.Notes.route -> "Notes"
                     currentRoute == Screen.Schedule.route -> "Schedule"
                     currentRoute == Screen.Import.route -> "Import"
@@ -251,8 +251,8 @@ fun PlannerApp(
                     onDeleteImage = viewModel::deleteWorkImage
                 )
             }
-            composable(Screen.Training.route) {
-                TrainingScreen(
+            composable(Screen.Manager.route) {
+                ManagerScreen(
                     state = state,
                     importState = trainingImportState,
                     onRecognizeImage = viewModel::recognizeTrainingImage,
@@ -727,7 +727,7 @@ private fun TaskViewSelector(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TrainingScreen(
+private fun ManagerScreen(
     state: AppState,
     importState: TrainingImportUiState,
     onRecognizeImage: (Uri) -> Unit,
@@ -742,10 +742,12 @@ private fun TrainingScreen(
     val today = LocalDate.now()
     var searchText by remember { mutableStateOf("") }
     var trainingView by remember { mutableStateOf(TrainingView.Open) }
+    var showAddTraining by remember { mutableStateOf(state.trainingItems.isEmpty()) }
     val openItems = state.trainingItems.filter { it.completedAt == null }
     val overdue = openItems.count { it.dueDate?.isBefore(today) == true }
     val dueSoon = openItems.count { it.dueDate?.let { due -> !due.isBefore(today) && !due.isAfter(today.plusDays(7)) } == true }
     val noDate = openItems.count { it.dueDate == null }
+    val associateCount = openItems.map { it.associateName.lowercase() }.distinct().size
     val filteredItems = state.trainingItems
         .filter { item ->
             when (trainingView) {
@@ -775,22 +777,30 @@ private fun TrainingScreen(
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         item {
-            AddTrainingCard(
-                importState = importState,
-                onAddManual = onAddManual,
-                onRecognizeImage = onRecognizeImage,
-                onTextChanged = onTextChanged,
-                onImport = onImport
+            ManagerDashboardCard(
+                openTrainingCount = openItems.size,
+                associateCount = associateCount,
+                overdueCount = overdue,
+                dueSoonCount = dueSoon,
+                onViewOpen = { trainingView = TrainingView.Open },
+                onViewAssociates = { trainingView = TrainingView.Associates },
+                onViewOverdue = { trainingView = TrainingView.Overdue },
+                onViewDueSoon = { trainingView = TrainingView.DueSoon },
+                onCreateFollowUps = onCreateFollowUps
             )
         }
         item {
-            TrainingSummaryCard(
-                openCount = openItems.size,
-                overdueCount = overdue,
-                dueSoonCount = dueSoon,
-                noDateCount = noDate,
-                onCreateFollowUps = onCreateFollowUps
-            )
+            if (showAddTraining) {
+                AddTrainingCard(
+                    importState = importState,
+                    onAddManual = onAddManual,
+                    onRecognizeImage = onRecognizeImage,
+                    onTextChanged = onTextChanged,
+                    onImport = onImport
+                )
+            } else {
+                AddTrainingPrompt(onOpen = { showAddTraining = true })
+            }
         }
         item {
             Card(
@@ -843,6 +853,103 @@ private fun TrainingScreen(
                     onCreateTask = { onCreateTask(item.id) },
                     onDelete = { onDelete(item.id) }
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddTrainingPrompt(onOpen: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Training intake", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Manual entry or printout photo",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Button(onClick = onOpen) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Add")
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ManagerDashboardCard(
+    openTrainingCount: Int,
+    associateCount: Int,
+    overdueCount: Int,
+    dueSoonCount: Int,
+    onViewOpen: () -> Unit,
+    onViewAssociates: () -> Unit,
+    onViewOverdue: () -> Unit,
+    onViewDueSoon: () -> Unit,
+    onCreateFollowUps: () -> Unit
+) {
+    val attentionCount = overdueCount + dueSoonCount
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                "Manager dashboard",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                fontWeight = FontWeight.SemiBold
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(onClick = onViewOpen, label = { Text("$openTrainingCount open training") })
+                AssistChip(onClick = onViewAssociates, label = { Text("$associateCount associates") })
+                AssistChip(
+                    onClick = onViewOverdue,
+                    label = { Text("$overdueCount overdue") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = Color(0xFFFF5A66).copy(alpha = 0.16f),
+                        labelColor = Color(0xFFFF5A66)
+                    )
+                )
+                AssistChip(
+                    onClick = onViewDueSoon,
+                    label = { Text("$dueSoonCount due soon") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = Color(0xFFFFB020).copy(alpha = 0.16f),
+                        labelColor = Color(0xFFFFB020)
+                    )
+                )
+                AssistChip(
+                    onClick = {
+                        if (overdueCount > 0) onViewOverdue() else onViewDueSoon()
+                    },
+                    label = { Text("$attentionCount need attention") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.22f),
+                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                )
+            }
+            OutlinedButton(
+                onClick = onCreateFollowUps,
+                enabled = openTrainingCount > 0,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Add follow-up tasks")
             }
         }
     }
@@ -2905,9 +3012,9 @@ private fun EmptyState(title: String, body: String) {
 
 private sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     data object Tasks : Screen("tasks", "Today", Icons.Default.CheckCircle)
-    data object Training : Screen("training", "Train", Icons.Default.CheckCircle)
     data object Notes : Screen("notes", "Notes", Icons.AutoMirrored.Filled.Notes)
     data object Schedule : Screen("schedule", "Schedule", Icons.Default.CalendarMonth)
+    data object Manager : Screen("manager", "Manager", Icons.Default.Event)
     data object Import : Screen("import", "Import", Icons.Default.FileUpload)
     data object Settings : Screen("settings", "Settings", Icons.Default.Settings)
     data object TaskDetail : Screen("task", "Task", Icons.Default.CheckCircle)
