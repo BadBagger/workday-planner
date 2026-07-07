@@ -22,28 +22,28 @@ fun WorkdayPlannerTheme(
 
 private fun lightColors(accentStyle: AccentStyle) = lightColorScheme(
     primary = accentStyle.primaryLight,
-    onPrimary = Color.White,
+    onPrimary = accentStyle.onPrimaryLight,
     primaryContainer = accentStyle.containerLight,
-    onPrimaryContainer = accentStyle.primaryDark,
-    secondary = Color(0xFF607D3B),
-    tertiary = Color(0xFFE6B94D),
-    background = Color(0xFFF5F7FB),
-    surface = Color.White,
-    surfaceVariant = Color(0xFFE7ECF4),
-    onSurface = Color(0xFF1B1F24)
+    onPrimaryContainer = accentStyle.onPrimaryContainerLight,
+    secondary = accentStyle.secondaryLight,
+    tertiary = accentStyle.tertiaryLight,
+    background = accentStyle.backgroundLight,
+    surface = accentStyle.surfaceLight,
+    surfaceVariant = accentStyle.surfaceVariantLight,
+    onSurface = accentStyle.onSurfaceLight
 )
 
 private fun darkColors(accentStyle: AccentStyle) = darkColorScheme(
     primary = accentStyle.primaryDark,
-    onPrimary = Color(0xFF071522),
+    onPrimary = accentStyle.onPrimaryDark,
     primaryContainer = accentStyle.containerDark,
-    onPrimaryContainer = Color(0xFFEAF2FF),
-    secondary = Color(0xFFBBD68A),
-    tertiary = Color(0xFFEFD17A),
-    background = Color(0xFF0E1217),
-    surface = Color(0xFF171C22),
-    surfaceVariant = Color(0xFF2A313A),
-    onSurface = Color(0xFFE8EDF3)
+    onPrimaryContainer = accentStyle.onPrimaryContainerDark,
+    secondary = accentStyle.secondaryDark,
+    tertiary = accentStyle.tertiaryDark,
+    background = accentStyle.backgroundDark,
+    surface = accentStyle.surfaceDark,
+    surfaceVariant = accentStyle.surfaceVariantDark,
+    onSurface = accentStyle.onSurfaceDark
 )
 
 private val AccentStyle.primaryLight: Color
@@ -51,6 +51,7 @@ private val AccentStyle.primaryLight: Color
         AccentStyle.Classic -> Color(0xFF1E5AA8)
         AccentStyle.Emerald -> Color(0xFF00796B)
         AccentStyle.Sunrise -> Color(0xFFB26A00)
+        AccentStyle.Logo -> Color(0xFF008C92)
     }
 
 private val AccentStyle.primaryDark: Color
@@ -58,6 +59,7 @@ private val AccentStyle.primaryDark: Color
         AccentStyle.Classic -> Color(0xFF8DBDFF)
         AccentStyle.Emerald -> Color(0xFF80CBC4)
         AccentStyle.Sunrise -> Color(0xFFFFC477)
+        AccentStyle.Logo -> Color(0xFF35E0D4)
     }
 
 private val AccentStyle.containerLight: Color
@@ -65,6 +67,7 @@ private val AccentStyle.containerLight: Color
         AccentStyle.Classic -> Color(0xFFDCEAFF)
         AccentStyle.Emerald -> Color(0xFFD7F2EE)
         AccentStyle.Sunrise -> Color(0xFFFFE4C2)
+        AccentStyle.Logo -> Color(0xFFD9F7F3)
     }
 
 private val AccentStyle.containerDark: Color
@@ -72,4 +75,101 @@ private val AccentStyle.containerDark: Color
         AccentStyle.Classic -> Color(0xFF173457)
         AccentStyle.Emerald -> Color(0xFF113D39)
         AccentStyle.Sunrise -> Color(0xFF4A2B13)
+        AccentStyle.Logo -> Color(0xFF063E44)
+    }
+
+private val AccentStyle.onPrimaryLight: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFF001F22)
+        else -> Color.White
+    }
+
+private val AccentStyle.onPrimaryDark: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFF002325)
+        else -> Color(0xFF071522)
+    }
+
+private val AccentStyle.onPrimaryContainerLight: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFF00373A)
+        else -> primaryDark
+    }
+
+private val AccentStyle.onPrimaryContainerDark: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFFD9FFFA)
+        else -> Color(0xFFEAF2FF)
+    }
+
+private val AccentStyle.secondaryLight: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFF6E9500)
+        else -> Color(0xFF607D3B)
+    }
+
+private val AccentStyle.secondaryDark: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFFB8EA32)
+        else -> Color(0xFFBBD68A)
+    }
+
+private val AccentStyle.tertiaryLight: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFF007C84)
+        else -> Color(0xFFE6B94D)
+    }
+
+private val AccentStyle.tertiaryDark: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFF97F5EC)
+        else -> Color(0xFFEFD17A)
+    }
+
+private val AccentStyle.backgroundLight: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFFF1FAFA)
+        else -> Color(0xFFF5F7FB)
+    }
+
+private val AccentStyle.backgroundDark: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFF070B16)
+        else -> Color(0xFF0E1217)
+    }
+
+private val AccentStyle.surfaceLight: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color.White
+        else -> Color.White
+    }
+
+private val AccentStyle.surfaceDark: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFF101827)
+        else -> Color(0xFF171C22)
+    }
+
+private val AccentStyle.surfaceVariantLight: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFFD7EBED)
+        else -> Color(0xFFE7ECF4)
+    }
+
+private val AccentStyle.surfaceVariantDark: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFF1A2A34)
+        else -> Color(0xFF2A313A)
+    }
+
+private val AccentStyle.onSurfaceLight: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFF101923)
+        else -> Color(0xFF1B1F24)
+    }
+
+private val AccentStyle.onSurfaceDark: Color
+    get() = when (this) {
+        AccentStyle.Logo -> Color(0xFFEAF7F7)
+        else -> Color(0xFFE8EDF3)
     }

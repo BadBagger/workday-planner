@@ -17,7 +17,8 @@ enum class RepeatRule {
 enum class AccentStyle(val label: String) {
     Classic("Blue"),
     Emerald("Teal"),
-    Sunrise("Amber")
+    Sunrise("Amber"),
+    Logo("Logo")
 }
 
 enum class TaskCategory(val label: String) {
