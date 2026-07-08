@@ -2,6 +2,7 @@ package com.example.workdayplanner
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.workdayplanner.alarm.AlarmScheduler
@@ -11,11 +12,16 @@ import com.example.workdayplanner.data.AccentStyle
 import com.example.workdayplanner.data.AppState
 import com.example.workdayplanner.data.ParsedSchedule
 import com.example.workdayplanner.data.PaySettings
+import com.example.workdayplanner.data.PremiumAccess
 import com.example.workdayplanner.data.PlannerRepository
 import com.example.workdayplanner.data.ScheduleTextParser
 import com.example.workdayplanner.data.ScheduleChangeDetector
 import com.example.workdayplanner.data.ScheduleChangeSet
+import com.example.workdayplanner.data.ScheduleImportGuidance
+import com.example.workdayplanner.data.ScheduleImportGuidanceClassifier
+import com.example.workdayplanner.data.ScheduleImportIssue
 import com.example.workdayplanner.data.TaskItem
+import com.example.workdayplanner.data.TaskTemplate
 import com.example.workdayplanner.data.TaskRecurrence
 import com.example.workdayplanner.data.TaskCategory
 import com.example.workdayplanner.data.TaskPriority
@@ -27,6 +33,11 @@ import com.example.workdayplanner.data.WorkNoteOrganizer
 import com.example.workdayplanner.data.WorkEvent
 import com.example.workdayplanner.data.WidgetLayoutMode
 import com.example.workdayplanner.data.WorkImage
+import com.example.workdayplanner.data.WorkShift
+import com.example.workdayplanner.data.ShiftTemplate
+import com.example.workdayplanner.data.ShiftTemplateKind
+import com.example.workdayplanner.data.ShiftPattern
+import com.example.workdayplanner.data.ScheduleAwareTaskPlanner
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
@@ -60,10 +71,15 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     private val mutableTrainingImportState = MutableStateFlow(TrainingImportUiState())
     val trainingImportState: StateFlow<TrainingImportUiState> = mutableTrainingImportState.asStateFlow()
 
+    init {
+        alarmScheduler.rescheduleOpenTasks(state.value.tasks)
+    }
+
     fun saveTask(task: TaskItem) {
-        repository.upsertTask(task)
-        alarmScheduler.cancel(task.id)
-        alarmScheduler.schedule(task)
+        val resolved = ScheduleAwareTaskPlanner.resolve(task, state.value)
+        repository.upsertTask(resolved)
+        alarmScheduler.cancel(resolved.id)
+        alarmScheduler.schedule(resolved)
     }
 
     fun addChecklistTemplate(templateId: String) {
@@ -249,14 +265,70 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         repository.toggleComplete(taskId)
         if (!task.completed) {
             alarmScheduler.cancel(taskId)
-            TaskRecurrence.nextOccurrence(task, state.value)?.let(::saveTask)
+            TaskRecurrence.nextOccurrence(task, state.value)?.let(::saveTaskIfMissing)
         } else {
             alarmScheduler.schedule(task.copy(completed = false))
         }
     }
 
+    private fun saveTaskIfMissing(task: TaskItem) {
+        val exists = state.value.tasks.any {
+            it.id != task.id && it.title == task.title && it.deadline == task.deadline
+        }
+        if (!exists) saveTask(task)
+    }
+
     fun addDayOff(date: LocalDate) {
         repository.addDayOff(date)
+    }
+
+    fun addTypedDayOff(date: LocalDate, kind: ShiftTemplateKind) {
+        repository.addDayOff(date, kind)
+    }
+
+    fun saveShift(shift: WorkShift) {
+        repository.upsertShift(shift)
+        rescheduleTasksForShift(shift.id)
+    }
+
+    fun deleteShift(shiftId: String) {
+        state.value.tasks.filter { it.linkedShiftId == shiftId }.forEach { task ->
+            alarmScheduler.cancel(task.id)
+        }
+        repository.deleteShift(shiftId)
+    }
+
+    fun saveShiftPattern(pattern: ShiftPattern) {
+        repository.upsertShiftPattern(pattern)
+    }
+
+    fun applyShiftPattern(pattern: ShiftPattern, allowDuplicates: Boolean) {
+        repository.applyShiftPattern(pattern, allowDuplicates)
+        alarmScheduler.rescheduleOpenTasks(state.value.tasks)
+    }
+
+    fun setShiftPatternEnabled(patternId: String, enabled: Boolean) {
+        repository.setShiftPatternEnabled(patternId, enabled)
+    }
+
+    fun deleteShiftPattern(patternId: String) {
+        repository.deleteShiftPattern(patternId)
+    }
+
+    fun saveShiftTemplate(template: ShiftTemplate) {
+        repository.upsertShiftTemplate(template)
+    }
+
+    fun deleteShiftTemplate(templateId: String) {
+        repository.deleteShiftTemplate(templateId)
+    }
+
+    fun saveTaskTemplate(template: TaskTemplate) {
+        repository.upsertTaskTemplate(template)
+    }
+
+    fun deleteTaskTemplate(templateId: String) {
+        repository.deleteTaskTemplate(templateId)
     }
 
     fun removeDayOff(date: LocalDate) {
@@ -265,6 +337,17 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearSchedule() {
         repository.clearSchedule()
+        alarmScheduler.rescheduleOpenTasks(state.value.tasks)
+    }
+
+    private fun rescheduleTasksForShift(shiftId: String) {
+        val linked = state.value.tasks.filter { it.linkedShiftId == shiftId }
+        linked.forEach { task ->
+            val resolved = ScheduleAwareTaskPlanner.resolve(task, state.value)
+            repository.upsertTask(resolved)
+            alarmScheduler.cancel(resolved.id)
+            alarmScheduler.schedule(resolved)
+        }
     }
 
     fun setDarkMode(enabled: Boolean) {
@@ -290,6 +373,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun setPaySettings(settings: PaySettings) {
         repository.setPaySettings(settings)
+    }
+
+    fun setMockPremium(enabled: Boolean) {
+        repository.setMockPremium(enabled)
     }
 
     fun clockIn() {
@@ -328,12 +415,20 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun setImportText(text: String) {
-        mutableImportState.value = mutableImportState.value.copy(rawText = text, error = null)
+        mutableImportState.value = mutableImportState.value.copy(rawText = text, error = null, guidance = null)
     }
 
     fun recognizeScheduleImage(uri: Uri) {
+        if (!PremiumAccess.canImportScreenshot(state.value)) {
+            mutableImportState.value = currentImportState().copy(
+                error = "Free screenshot imports are used for this month.",
+                guidance = null,
+                isReadingImage = false
+            )
+            return
+        }
         viewModelScope.launch {
-            mutableImportState.value = mutableImportState.value.copy(isReadingImage = true, error = null)
+            mutableImportState.value = mutableImportState.value.copy(isReadingImage = true, error = null, guidance = null)
             val result = runCatching {
                 val image = InputImage.fromFilePath(getApplication(), uri)
                 val recognized = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -342,26 +437,79 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
                 recognized.toReadingOrderText()
             }
             mutableImportState.value = result.fold(
-                onSuccess = { ImportUiState(rawText = it, isReadingImage = false) },
-                onFailure = { currentImportState().copy(isReadingImage = false, error = it.message ?: "Could not read image.") }
+                onSuccess = {
+                    Log.d(TAG, "Schedule OCR completed. textLength=${it.length}")
+                    ImportUiState(
+                        rawText = it,
+                        isReadingImage = false,
+                        imageBased = true,
+                        guidance = ScheduleImportGuidanceClassifier.fromRecognizedText(it)
+                    )
+                },
+                onFailure = {
+                    Log.d(TAG, "Schedule OCR failed. type=${it::class.java.simpleName}")
+                    currentImportState().copy(
+                        isReadingImage = false,
+                        error = null,
+                        guidance = scheduleImportFailureGuidance(it)
+                    )
+                }
             )
         }
     }
 
+    fun cancelScheduleImport() {
+        mutableImportState.value = currentImportState().copy(
+            isReadingImage = false,
+            error = null,
+            guidance = ScheduleImportGuidance(ScheduleImportIssue.ImportCancelled)
+        )
+    }
+
+    fun resetScheduleImport() {
+        mutableImportState.value = ImportUiState()
+    }
+
     fun previewImport(): ParsedSchedule {
-        val parsed = ScheduleTextParser.parse(currentImportState().rawText)
+        val rawText = currentImportState().rawText
+        val parsed = ScheduleTextParser.parse(rawText)
         val changes = ScheduleChangeDetector.compare(state.value, parsed)
-        mutableImportState.value = currentImportState().copy(parsed = parsed, changes = changes, error = null)
+        mutableImportState.value = currentImportState().copy(
+            parsed = parsed,
+            changes = changes,
+            error = null,
+            guidance = ScheduleImportGuidanceClassifier.fromParsedText(rawText, parsed)
+        )
         return parsed
     }
 
-    fun applyImport() {
-        val parsed = previewImport()
+    fun applyImport(parsedOverride: ParsedSchedule? = null) {
+        val parsed = parsedOverride ?: previewImport()
+        val changes = ScheduleChangeDetector.compare(state.value, parsed)
         repository.importSchedule(parsed)
-        mutableImportState.value = currentImportState().copy(appliedMessage = "Added or updated ${parsed.shifts.size} shifts and ${parsed.daysOff.size} days off.")
+        if (currentImportState().imageBased) repository.recordScreenshotImport()
+        mutableImportState.value = currentImportState().copy(
+            parsed = parsed,
+            changes = changes,
+            appliedMessage = "Added or updated ${parsed.shifts.size} shifts and ${parsed.daysOff.size} days off.",
+            error = null,
+            guidance = null
+        )
     }
 
     private fun currentImportState() = mutableImportState.value
+
+    private fun scheduleImportFailureGuidance(error: Throwable): ScheduleImportGuidance {
+        val message = error.message.orEmpty()
+        val denied = error is SecurityException ||
+            message.contains("permission", ignoreCase = true) ||
+            message.contains("denied", ignoreCase = true)
+        return if (denied) {
+            ScheduleImportGuidance(ScheduleImportIssue.PermissionDenied)
+        } else {
+            ScheduleImportGuidance(ScheduleImportIssue.ImageTooBlurry, message.takeIf { it.isNotBlank() })
+        }
+    }
 
     private fun updateTodayTimecard(block: (TimecardEntry, LocalDateTime) -> TimecardEntry) {
         val today = LocalDate.now()
@@ -437,6 +585,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         val centerY: Int,
         val height: Int
     )
+
+    private companion object {
+        const val TAG = "WorkdayPlannerVM"
+    }
 }
 
 private fun TrainingItem.toTrainingTask(): TaskItem {
@@ -467,7 +619,9 @@ data class ImportUiState(
     val changes: ScheduleChangeSet? = null,
     val isReadingImage: Boolean = false,
     val error: String? = null,
-    val appliedMessage: String? = null
+    val guidance: ScheduleImportGuidance? = null,
+    val appliedMessage: String? = null,
+    val imageBased: Boolean = false
 )
 
 data class TrainingImportUiState(

@@ -5,9 +5,15 @@
 build/
 app/build/
 local.properties
+keystore.properties
+signing.properties
 *.iml
 .idea/
 release-keystore.jks
+*.jks
+*.keystore
 *.apk
 *.aab
+*password*
+*credential*
 .codex-remote-attachments/

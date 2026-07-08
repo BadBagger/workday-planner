@@ -11,11 +11,36 @@ enum class RepeatRule {
     Daily,
     Weekdays,
     Weekly,
-    CustomDays
+    CustomDays,
+    EveryWorkday,
+    OpeningShifts,
+    ClosingShifts,
+    TruckDays
+}
+
+enum class TaskTimingRule(val label: String) {
+    AtTime("At a time"),
+    BeforeNextShift("Before next shift"),
+    DuringShift("During shift"),
+    AfterShift("After shift"),
+    WorkdaysOnly("On workdays only")
+}
+
+enum class LinkedShiftType(val label: String) {
+    Any("Any shift"),
+    Opening("Opening shift"),
+    Closing("Closing shift"),
+    Truck("Truck day"),
+    Inventory("Inventory day")
+}
+
+enum class CarryOverBehavior(val label: String) {
+    None("Do not roll over"),
+    NextWorkday("Roll to next workday")
 }
 
 enum class AccentStyle(val label: String) {
-    Classic("Blue"),
+    Classic("Smithware"),
     Emerald("Teal"),
     Sunrise("Amber"),
     Logo("Logo")
@@ -65,6 +90,12 @@ data class TaskItem(
     val repeatRule: RepeatRule = RepeatRule.None,
     val repeatDays: Set<DayOfWeek> = emptySet(),
     val skipDaysOff: Boolean = true,
+    val workRelated: Boolean = true,
+    val linkedShiftId: String? = null,
+    val linkedShiftType: LinkedShiftType = LinkedShiftType.Any,
+    val timingRule: TaskTimingRule = TaskTimingRule.AtTime,
+    val carryOverBehavior: CarryOverBehavior = CarryOverBehavior.None,
+    val alarmOffsetMinutes: Long = 30,
     val completed: Boolean = false
 )
 
@@ -102,7 +133,77 @@ data class WorkShift(
     val date: LocalDate,
     val start: LocalTime,
     val end: LocalTime,
-    val label: String = "Work"
+    val label: String = "Work",
+    val location: String = "",
+    val notes: String = "",
+    val patternId: String? = null
+)
+
+enum class ShiftTemplateKind {
+    Work,
+    DayOff,
+    Vacation,
+    Sick
+}
+
+data class ShiftTemplate(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val label: String = "Work",
+    val start: LocalTime = LocalTime.of(9, 0),
+    val end: LocalTime = LocalTime.of(17, 0),
+    val location: String = "",
+    val notes: String = "",
+    val kind: ShiftTemplateKind = ShiftTemplateKind.Work,
+    val builtIn: Boolean = false
+)
+
+enum class ShiftPatternDayKind {
+    Work,
+    Off
+}
+
+data class ShiftPatternDay(
+    val index: Int,
+    val kind: ShiftPatternDayKind = ShiftPatternDayKind.Off,
+    val label: String = "Work",
+    val start: LocalTime = LocalTime.of(9, 0),
+    val end: LocalTime = LocalTime.of(17, 0),
+    val location: String = "",
+    val notes: String = ""
+)
+
+data class ShiftPattern(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val startDate: LocalDate = LocalDate.now(),
+    val cycleLength: Int = 7,
+    val days: List<ShiftPatternDay> = emptyList(),
+    val endDate: LocalDate? = null,
+    val enabled: Boolean = true,
+    val createdAt: LocalDateTime = LocalDateTime.now()
+)
+
+data class ShiftPatternPreview(
+    val shifts: List<WorkShift>,
+    val daysOff: Set<LocalDate>
+)
+
+data class TaskTemplate(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val title: String,
+    val notes: String = "",
+    val category: TaskCategory = TaskCategory.General,
+    val priority: TaskPriority = TaskPriority.Normal,
+    val repeatRule: RepeatRule = RepeatRule.None,
+    val reminderEnabled: Boolean = false,
+    val workRelated: Boolean = true,
+    val linkedShiftType: LinkedShiftType = LinkedShiftType.Any,
+    val timingRule: TaskTimingRule = TaskTimingRule.AtTime,
+    val carryOverBehavior: CarryOverBehavior = CarryOverBehavior.None,
+    val alarmOffsetMinutes: Long = 30,
+    val builtIn: Boolean = false
 )
 
 data class WorkEvent(
@@ -119,9 +220,46 @@ data class PaySettings(
     val unpaidLunchMinutes: Int = 30,
     val overtimeThresholdHours: Double = 40.0,
     val overtimeMultiplier: Double = 1.5,
+    val dailyOvertimeThresholdHours: Double = 0.0,
+    val nightShiftExtraAmount: Double = 0.0,
+    val weekendExtraAmount: Double = 0.0,
+    val customShiftTypeLabel: String = "",
+    val customShiftTypeExtraAmount: Double = 0.0,
+    val payPeriodType: PayPeriodType = PayPeriodType.Weekly,
+    val customPayPeriodStart: LocalDate = LocalDate.now(),
+    val showPayOnDashboard: Boolean = false,
     val estimatedTaxRate: Double = 18.0,
     val estimatedDeductionRate: Double = 5.0
 )
+
+enum class PayPeriodType(val label: String) {
+    Weekly("Weekly"),
+    Biweekly("Biweekly"),
+    SemiMonthly("Semi-monthly"),
+    Custom("Custom start date")
+}
+
+enum class PremiumFeature(val title: String, val value: String) {
+    UnlimitedImports("Unlimited screenshot imports", "Import as many schedule screenshots as you need."),
+    AdvancedOcr("Advanced OCR correction", "Review, fix, and confirm messy schedule scans faster."),
+    ShiftPatterns("Rotating shift patterns", "Generate 4-on/4-off, 5-on/2-off, and custom cycles."),
+    PayEstimator("Pay and overtime estimator", "Estimate scheduled gross pay before payday."),
+    CalendarSync("Calendar export/sync", "Copy your work schedule to your device calendar."),
+    TaskTemplates("Task templates", "Reuse opening, closing, truck, and checklist routines."),
+    AdvancedTaskRules("Advanced task rules", "Link tasks to shifts, workdays, and carry-over behavior."),
+    Widgets("Widgets", "See workday details from your home screen."),
+    BackupExport("Backup/export", "Export local data when you need a copy."),
+    ThemeCustomization("Theme customization", "Adjust accent and widget display styles.")
+}
+
+data class PremiumEntitlement(
+    val isPremium: Boolean = false,
+    val mockPremiumEnabled: Boolean = false,
+    val importMonth: String = "",
+    val screenshotImportsThisMonth: Int = 0
+) {
+    fun has(feature: PremiumFeature): Boolean = isPremium || mockPremiumEnabled
+}
 
 data class TimecardEntry(
     val id: String = UUID.randomUUID().toString(),
@@ -140,6 +278,7 @@ data class AppState(
     val events: List<WorkEvent> = emptyList(),
     val shifts: List<WorkShift> = emptyList(),
     val daysOff: Set<LocalDate> = emptySet(),
+    val dayOffTypes: Map<LocalDate, ShiftTemplateKind> = emptyMap(),
     val defaultDaysOff: Set<DayOfWeek> = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
     val darkMode: Boolean = false,
     val accentStyle: AccentStyle = AccentStyle.Classic,
@@ -147,5 +286,9 @@ data class AppState(
     val selectedCalendarId: Long? = null,
     val paySettings: PaySettings = PaySettings(),
     val timecards: List<TimecardEntry> = emptyList(),
-    val trainingItems: List<TrainingItem> = emptyList()
+    val trainingItems: List<TrainingItem> = emptyList(),
+    val shiftTemplates: List<ShiftTemplate> = emptyList(),
+    val taskTemplates: List<TaskTemplate> = emptyList(),
+    val shiftPatterns: List<ShiftPattern> = emptyList(),
+    val premium: PremiumEntitlement = PremiumEntitlement()
 )

@@ -436,23 +436,25 @@ private data class WidgetPalette(
     companion object {
         fun from(state: WidgetState): WidgetPalette {
             val accent = when (state.accentStyle) {
+                "Classic" -> if (state.darkMode) 0xFFFFB36B.toInt() else 0xFF9B4A15.toInt()
                 "Emerald" -> if (state.darkMode) 0xFFA7D98B.toInt() else 0xFF2D6B3F.toInt()
                 "Sunrise" -> if (state.darkMode) 0xFFFFC477.toInt() else 0xFFB35C16.toInt()
-                else -> if (state.darkMode) 0xFF8DBDFF.toInt() else 0xFF1E5AA8.toInt()
+                "Logo" -> if (state.darkMode) 0xFF35E0D4.toInt() else 0xFF008C92.toInt()
+                else -> if (state.darkMode) 0xFFFFB36B.toInt() else 0xFF9B4A15.toInt()
             }
             return if (state.darkMode) {
                 WidgetPalette(
-                    background = 0xFF171C22.toInt(),
-                    title = 0xFFF4F7FB.toInt(),
-                    body = 0xFFE4E9F0.toInt(),
+                    background = 0xFF1C1916.toInt(),
+                    title = 0xFFFFF7EF.toInt(),
+                    body = 0xFFEADFD5.toInt(),
                     accent = accent,
                     success = 0xFFA7D98B.toInt()
                 )
             } else {
                 WidgetPalette(
-                    background = 0xFFF7F9FC.toInt(),
-                    title = 0xFF1B1F24.toInt(),
-                    body = 0xFF1B1F24.toInt(),
+                    background = 0xFFFFFCF8.toInt(),
+                    title = 0xFF241914.toInt(),
+                    body = 0xFF3B302A.toInt(),
                     accent = accent,
                     success = 0xFF4F7D2B.toInt()
                 )

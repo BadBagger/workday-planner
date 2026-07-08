@@ -3,6 +3,7 @@ package com.example.workdayplanner.data
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
 
@@ -307,5 +308,55 @@ class ScheduleTextParserTest {
         assertEquals(LocalDate.of(2026, 7, 16), parsed.shifts[3].date)
         assertEquals(LocalTime.of(22, 30), parsed.shifts[3].end)
         assertEquals(LocalDate.of(2026, 7, 17), parsed.shifts[4].date)
+    }
+
+    @Test
+    fun parsesCompactWeekdayShift() {
+        val parsed = ScheduleTextParser.parse("Mon 8-4", currentYear = 2026)
+
+        assertEquals(1, parsed.shifts.size)
+        assertEquals(DayOfWeek.MONDAY, parsed.shifts.first().date.dayOfWeek)
+        assertEquals(LocalTime.of(8, 0), parsed.shifts.first().start)
+        assertEquals(LocalTime.of(16, 0), parsed.shifts.first().end)
+    }
+
+    @Test
+    fun parsesFullWeekdayShiftWithMinutes() {
+        val parsed = ScheduleTextParser.parse("Tuesday 2:00 PM - 10:30 PM", currentYear = 2026)
+
+        assertEquals(1, parsed.shifts.size)
+        assertEquals(DayOfWeek.TUESDAY, parsed.shifts.first().date.dayOfWeek)
+        assertEquals(LocalTime.of(14, 0), parsed.shifts.first().start)
+        assertEquals(LocalTime.of(22, 30), parsed.shifts.first().end)
+    }
+
+    @Test
+    fun parsesWeekdayOff() {
+        val parsed = ScheduleTextParser.parse("Wed OFF", currentYear = 2026)
+
+        assertEquals(1, parsed.daysOff.size)
+        assertEquals(DayOfWeek.WEDNESDAY, parsed.daysOff.first().dayOfWeek)
+    }
+
+    @Test
+    fun parsesDatedOpenShiftWithCompactPeriods() {
+        val parsed = ScheduleTextParser.parse("7/12 Open 6a-2p", currentYear = 2026)
+
+        assertEquals(1, parsed.shifts.size)
+        assertEquals(LocalDate.of(2026, 7, 12), parsed.shifts.first().date)
+        assertEquals("Open", parsed.shifts.first().label)
+        assertEquals(LocalTime.of(6, 0), parsed.shifts.first().start)
+        assertEquals(LocalTime.of(14, 0), parsed.shifts.first().end)
+    }
+
+    @Test
+    fun parsesCloseShiftWithCompactPmPeriods() {
+        val parsed = ScheduleTextParser.parse("Fri Close 1pm-9pm", currentYear = 2026)
+
+        assertEquals(1, parsed.shifts.size)
+        assertEquals(DayOfWeek.FRIDAY, parsed.shifts.first().date.dayOfWeek)
+        assertEquals("Close", parsed.shifts.first().label)
+        assertEquals(LocalTime.of(13, 0), parsed.shifts.first().start)
+        assertEquals(LocalTime.of(21, 0), parsed.shifts.first().end)
     }
 }

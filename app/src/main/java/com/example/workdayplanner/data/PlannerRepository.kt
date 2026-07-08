@@ -80,16 +80,72 @@ class PlannerRepository(context: Context) {
         )
     }
 
-    fun addDayOff(date: LocalDate) = update { state ->
-        state.copy(daysOff = state.daysOff + date)
+    fun addDayOff(date: LocalDate, kind: ShiftTemplateKind = ShiftTemplateKind.DayOff) = update { state ->
+        state.copy(
+            daysOff = state.daysOff + date,
+            dayOffTypes = state.dayOffTypes + (date to kind)
+        )
+    }
+
+    fun upsertShift(shift: WorkShift) = update { state ->
+        state.copy(
+            shifts = (state.shifts.filterNot { it.id == shift.id } + shift)
+                .sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start }),
+            daysOff = state.daysOff - shift.date,
+            dayOffTypes = state.dayOffTypes - shift.date
+        )
+    }
+
+    fun deleteShift(shiftId: String) = update { state ->
+        removeShiftAndUnlinkTasks(state, shiftId)
+    }
+
+    fun upsertShiftPattern(pattern: ShiftPattern) = update { state ->
+        state.copy(shiftPatterns = (state.shiftPatterns.filterNot { it.id == pattern.id } + pattern).sortedBy { it.startDate })
+    }
+
+    fun setShiftPatternEnabled(patternId: String, enabled: Boolean) = update { state ->
+        state.copy(shiftPatterns = state.shiftPatterns.map { if (it.id == patternId) it.copy(enabled = enabled) else it })
+    }
+
+    fun deleteShiftPattern(patternId: String) = update { state ->
+        state.copy(shiftPatterns = state.shiftPatterns.filterNot { it.id == patternId })
+    }
+
+    fun applyShiftPattern(pattern: ShiftPattern, allowDuplicates: Boolean) = update { state ->
+        val preview = ShiftPatternGenerator.preview(pattern)
+        val existingKeys = state.shifts.map { it.shiftCollisionKey() }.toSet()
+        val generated = if (allowDuplicates) preview.shifts else preview.shifts.filterNot { it.shiftCollisionKey() in existingKeys }
+        state.copy(
+            shiftPatterns = (state.shiftPatterns.filterNot { it.id == pattern.id } + pattern).sortedBy { it.startDate },
+            shifts = (state.shifts + generated).sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start }),
+            daysOff = state.daysOff + preview.daysOff,
+            dayOffTypes = state.dayOffTypes + preview.daysOff.associateWith { ShiftTemplateKind.DayOff }
+        )
+    }
+
+    fun upsertShiftTemplate(template: ShiftTemplate) = update { state ->
+        state.copy(shiftTemplates = (state.shiftTemplates.filterNot { it.id == template.id } + template.copy(builtIn = false)).sortedBy { it.name.lowercase() })
+    }
+
+    fun deleteShiftTemplate(templateId: String) = update { state ->
+        state.copy(shiftTemplates = state.shiftTemplates.filterNot { it.id == templateId })
+    }
+
+    fun upsertTaskTemplate(template: TaskTemplate) = update { state ->
+        state.copy(taskTemplates = (state.taskTemplates.filterNot { it.id == template.id } + template.copy(builtIn = false)).sortedBy { it.name.lowercase() })
+    }
+
+    fun deleteTaskTemplate(templateId: String) = update { state ->
+        state.copy(taskTemplates = state.taskTemplates.filterNot { it.id == templateId })
     }
 
     fun removeDayOff(date: LocalDate) = update { state ->
-        state.copy(daysOff = state.daysOff - date)
+        state.copy(daysOff = state.daysOff - date, dayOffTypes = state.dayOffTypes - date)
     }
 
     fun clearSchedule() = update { state ->
-        state.copy(shifts = emptyList(), daysOff = emptySet())
+        state.copy(shifts = emptyList(), daysOff = emptySet(), dayOffTypes = emptyMap())
     }
 
     fun setDefaultDayOff(day: DayOfWeek, isOff: Boolean) = update { state ->
@@ -114,6 +170,20 @@ class PlannerRepository(context: Context) {
 
     fun setPaySettings(settings: PaySettings) = update { state ->
         state.copy(paySettings = settings)
+    }
+
+    fun setMockPremium(enabled: Boolean) = update { state ->
+        state.copy(premium = state.premium.copy(mockPremiumEnabled = enabled, isPremium = false))
+    }
+
+    fun recordScreenshotImport(month: String = java.time.YearMonth.now().toString()) = update { state ->
+        val currentCount = if (state.premium.importMonth == month) state.premium.screenshotImportsThisMonth else 0
+        state.copy(
+            premium = state.premium.copy(
+                importMonth = month,
+                screenshotImportsThisMonth = currentCount + 1
+            )
+        )
     }
 
     fun upsertTimecard(entry: TimecardEntry) = update { state ->
@@ -158,6 +228,7 @@ class PlannerRepository(context: Context) {
             events = root.optJSONArray("events").toObjects(::eventFromJson),
             shifts = root.optJSONArray("shifts").toObjects(::shiftFromJson),
             daysOff = root.optJSONArray("daysOff").toStrings().map(LocalDate::parse).toSet(),
+            dayOffTypes = root.optJSONObject("dayOffTypes").toDayOffTypes(),
             defaultDaysOff = root.optJSONArray("defaultDaysOff").toStrings().map(DayOfWeek::valueOf).toSet(),
             darkMode = root.optBoolean("darkMode", false),
             accentStyle = runCatching {
@@ -173,7 +244,11 @@ class PlannerRepository(context: Context) {
             },
             paySettings = root.optJSONObject("paySettings")?.let(::paySettingsFromJson) ?: PaySettings(),
             timecards = root.optJSONArray("timecards").toObjects(::timecardFromJson),
-            trainingItems = root.optJSONArray("trainingItems").toObjects(::trainingItemFromJson)
+            trainingItems = root.optJSONArray("trainingItems").toObjects(::trainingItemFromJson),
+            shiftTemplates = root.optJSONArray("shiftTemplates").toObjects(::shiftTemplateFromJson),
+            taskTemplates = root.optJSONArray("taskTemplates").toObjects(::taskTemplateFromJson),
+            shiftPatterns = root.optJSONArray("shiftPatterns").toObjects(::shiftPatternFromJson),
+            premium = root.optJSONObject("premium")?.let(::premiumFromJson) ?: PremiumEntitlement()
         )
     }
 
@@ -185,6 +260,9 @@ class PlannerRepository(context: Context) {
             .put("events", JSONArray(state.events.map(::eventToJson)))
             .put("shifts", JSONArray(state.shifts.map(::shiftToJson)))
             .put("daysOff", JSONArray(state.daysOff.map(LocalDate::toString)))
+            .put("dayOffTypes", JSONObject().apply {
+                state.dayOffTypes.forEach { (date, kind) -> put(date.toString(), kind.name) }
+            })
             .put("defaultDaysOff", JSONArray(state.defaultDaysOff.map(DayOfWeek::name)))
             .put("darkMode", state.darkMode)
             .put("accentStyle", state.accentStyle.name)
@@ -193,6 +271,10 @@ class PlannerRepository(context: Context) {
             .put("paySettings", paySettingsToJson(state.paySettings))
             .put("timecards", JSONArray(state.timecards.map(::timecardToJson)))
             .put("trainingItems", JSONArray(state.trainingItems.map(::trainingItemToJson)))
+            .put("shiftTemplates", JSONArray(state.shiftTemplates.map(::shiftTemplateToJson)))
+            .put("taskTemplates", JSONArray(state.taskTemplates.map(::taskTemplateToJson)))
+            .put("shiftPatterns", JSONArray(state.shiftPatterns.map(::shiftPatternToJson)))
+            .put("premium", premiumToJson(state.premium))
         prefs.edit().putString("state", root.toString()).apply()
     }
 
@@ -207,6 +289,12 @@ class PlannerRepository(context: Context) {
         .put("repeatRule", task.repeatRule.name)
         .put("repeatDays", JSONArray(task.repeatDays.map(DayOfWeek::name)))
         .put("skipDaysOff", task.skipDaysOff)
+        .put("workRelated", task.workRelated)
+        .put("linkedShiftId", task.linkedShiftId)
+        .put("linkedShiftType", task.linkedShiftType.name)
+        .put("timingRule", task.timingRule.name)
+        .put("carryOverBehavior", task.carryOverBehavior.name)
+        .put("alarmOffsetMinutes", task.alarmOffsetMinutes)
         .put("completed", task.completed)
 
     private fun taskFromJson(json: JSONObject) = TaskItem(
@@ -226,6 +314,12 @@ class PlannerRepository(context: Context) {
             runCatching { DayOfWeek.valueOf(value) }.getOrNull()
         }.toSet(),
         skipDaysOff = json.optBoolean("skipDaysOff", true),
+        workRelated = json.optBoolean("workRelated", true),
+        linkedShiftId = json.optString("linkedShiftId").takeIf { it.isNotBlank() && it != "null" },
+        linkedShiftType = runCatching { LinkedShiftType.valueOf(json.optString("linkedShiftType", LinkedShiftType.Any.name)) }.getOrDefault(LinkedShiftType.Any),
+        timingRule = runCatching { TaskTimingRule.valueOf(json.optString("timingRule", TaskTimingRule.AtTime.name)) }.getOrDefault(TaskTimingRule.AtTime),
+        carryOverBehavior = runCatching { CarryOverBehavior.valueOf(json.optString("carryOverBehavior", CarryOverBehavior.None.name)) }.getOrDefault(CarryOverBehavior.None),
+        alarmOffsetMinutes = json.optLong("alarmOffsetMinutes", 30).coerceAtLeast(0),
         completed = json.optBoolean("completed")
     )
 
@@ -294,6 +388,14 @@ class PlannerRepository(context: Context) {
         .put("unpaidLunchMinutes", settings.unpaidLunchMinutes)
         .put("overtimeThresholdHours", settings.overtimeThresholdHours)
         .put("overtimeMultiplier", settings.overtimeMultiplier)
+        .put("dailyOvertimeThresholdHours", settings.dailyOvertimeThresholdHours)
+        .put("nightShiftExtraAmount", settings.nightShiftExtraAmount)
+        .put("weekendExtraAmount", settings.weekendExtraAmount)
+        .put("customShiftTypeLabel", settings.customShiftTypeLabel)
+        .put("customShiftTypeExtraAmount", settings.customShiftTypeExtraAmount)
+        .put("payPeriodType", settings.payPeriodType.name)
+        .put("customPayPeriodStart", settings.customPayPeriodStart.toString())
+        .put("showPayOnDashboard", settings.showPayOnDashboard)
         .put("estimatedTaxRate", settings.estimatedTaxRate)
         .put("estimatedDeductionRate", settings.estimatedDeductionRate)
 
@@ -302,6 +404,14 @@ class PlannerRepository(context: Context) {
         unpaidLunchMinutes = json.optInt("unpaidLunchMinutes", 30).coerceAtLeast(0),
         overtimeThresholdHours = json.optDouble("overtimeThresholdHours", 40.0).coerceAtLeast(0.0),
         overtimeMultiplier = json.optDouble("overtimeMultiplier", 1.5).coerceAtLeast(1.0),
+        dailyOvertimeThresholdHours = json.optDouble("dailyOvertimeThresholdHours", 0.0).coerceAtLeast(0.0),
+        nightShiftExtraAmount = json.optDouble("nightShiftExtraAmount", 0.0).coerceAtLeast(0.0),
+        weekendExtraAmount = json.optDouble("weekendExtraAmount", 0.0).coerceAtLeast(0.0),
+        customShiftTypeLabel = json.optString("customShiftTypeLabel"),
+        customShiftTypeExtraAmount = json.optDouble("customShiftTypeExtraAmount", 0.0).coerceAtLeast(0.0),
+        payPeriodType = runCatching { PayPeriodType.valueOf(json.optString("payPeriodType", PayPeriodType.Weekly.name)) }.getOrDefault(PayPeriodType.Weekly),
+        customPayPeriodStart = json.optString("customPayPeriodStart").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDate::parse) ?: LocalDate.now(),
+        showPayOnDashboard = json.optBoolean("showPayOnDashboard", false),
         estimatedTaxRate = json.optDouble("estimatedTaxRate", 18.0).coerceIn(0.0, 100.0),
         estimatedDeductionRate = json.optDouble("estimatedDeductionRate", 5.0).coerceIn(0.0, 100.0)
     )
@@ -348,15 +458,129 @@ class PlannerRepository(context: Context) {
         .put("start", shift.start.toString())
         .put("end", shift.end.toString())
         .put("label", shift.label)
+        .put("location", shift.location)
+        .put("notes", shift.notes)
+        .put("patternId", shift.patternId)
 
     private fun shiftFromJson(json: JSONObject) = WorkShift(
         id = json.getString("id"),
         date = LocalDate.parse(json.getString("date")),
         start = LocalTime.parse(json.getString("start")),
         end = LocalTime.parse(json.getString("end")),
-        label = json.optString("label", "Work")
+        label = json.optString("label", "Work"),
+        location = json.optString("location"),
+        notes = json.optString("notes"),
+        patternId = json.optString("patternId").takeIf { it.isNotBlank() && it != "null" }
+    )
+
+    private fun shiftTemplateToJson(template: ShiftTemplate) = JSONObject()
+        .put("id", template.id)
+        .put("name", template.name)
+        .put("label", template.label)
+        .put("start", template.start.toString())
+        .put("end", template.end.toString())
+        .put("location", template.location)
+        .put("notes", template.notes)
+        .put("kind", template.kind.name)
+
+    private fun shiftTemplateFromJson(json: JSONObject) = ShiftTemplate(
+        id = json.getString("id"),
+        name = json.optString("name", "Custom shift template"),
+        label = json.optString("label", "Work"),
+        start = json.optString("start").takeIf { it.isNotBlank() }?.let(LocalTime::parse) ?: LocalTime.of(9, 0),
+        end = json.optString("end").takeIf { it.isNotBlank() }?.let(LocalTime::parse) ?: LocalTime.of(17, 0),
+        location = json.optString("location"),
+        notes = json.optString("notes"),
+        kind = runCatching { ShiftTemplateKind.valueOf(json.optString("kind", ShiftTemplateKind.Work.name)) }.getOrDefault(ShiftTemplateKind.Work)
+    )
+
+    private fun taskTemplateToJson(template: TaskTemplate) = JSONObject()
+        .put("id", template.id)
+        .put("name", template.name)
+        .put("title", template.title)
+        .put("notes", template.notes)
+        .put("category", template.category.name)
+        .put("priority", template.priority.name)
+        .put("repeatRule", template.repeatRule.name)
+        .put("reminderEnabled", template.reminderEnabled)
+        .put("workRelated", template.workRelated)
+        .put("linkedShiftType", template.linkedShiftType.name)
+        .put("timingRule", template.timingRule.name)
+        .put("carryOverBehavior", template.carryOverBehavior.name)
+        .put("alarmOffsetMinutes", template.alarmOffsetMinutes)
+
+    private fun taskTemplateFromJson(json: JSONObject) = TaskTemplate(
+        id = json.getString("id"),
+        name = json.optString("name", "Custom task template"),
+        title = json.optString("title", json.optString("name", "Task")),
+        notes = json.optString("notes"),
+        category = runCatching { TaskCategory.valueOf(json.optString("category", TaskCategory.General.name)) }.getOrDefault(TaskCategory.General),
+        priority = runCatching { TaskPriority.valueOf(json.optString("priority", TaskPriority.Normal.name)) }.getOrDefault(TaskPriority.Normal),
+        repeatRule = runCatching { RepeatRule.valueOf(json.optString("repeatRule", RepeatRule.None.name)) }.getOrDefault(RepeatRule.None),
+        reminderEnabled = json.optBoolean("reminderEnabled", false),
+        workRelated = json.optBoolean("workRelated", true),
+        linkedShiftType = runCatching { LinkedShiftType.valueOf(json.optString("linkedShiftType", LinkedShiftType.Any.name)) }.getOrDefault(LinkedShiftType.Any),
+        timingRule = runCatching { TaskTimingRule.valueOf(json.optString("timingRule", TaskTimingRule.AtTime.name)) }.getOrDefault(TaskTimingRule.AtTime),
+        carryOverBehavior = runCatching { CarryOverBehavior.valueOf(json.optString("carryOverBehavior", CarryOverBehavior.None.name)) }.getOrDefault(CarryOverBehavior.None),
+        alarmOffsetMinutes = json.optLong("alarmOffsetMinutes", 30).coerceAtLeast(0)
+    )
+
+    private fun shiftPatternToJson(pattern: ShiftPattern) = JSONObject()
+        .put("id", pattern.id)
+        .put("name", pattern.name)
+        .put("startDate", pattern.startDate.toString())
+        .put("cycleLength", pattern.cycleLength)
+        .put("days", JSONArray(pattern.days.map(::shiftPatternDayToJson)))
+        .put("endDate", pattern.endDate?.toString())
+        .put("enabled", pattern.enabled)
+        .put("createdAt", pattern.createdAt.toString())
+
+    private fun shiftPatternFromJson(json: JSONObject) = ShiftPattern(
+        id = json.getString("id"),
+        name = json.optString("name", "Shift pattern"),
+        startDate = json.optString("startDate").takeIf { it.isNotBlank() }?.let(LocalDate::parse) ?: LocalDate.now(),
+        cycleLength = json.optInt("cycleLength", 7).coerceIn(1, 60),
+        days = json.optJSONArray("days").toObjects(::shiftPatternDayFromJson),
+        endDate = json.optString("endDate").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDate::parse),
+        enabled = json.optBoolean("enabled", true),
+        createdAt = json.optString("createdAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse)
+            ?: LocalDateTime.now()
+    )
+
+    private fun shiftPatternDayToJson(day: ShiftPatternDay) = JSONObject()
+        .put("index", day.index)
+        .put("kind", day.kind.name)
+        .put("label", day.label)
+        .put("start", day.start.toString())
+        .put("end", day.end.toString())
+        .put("location", day.location)
+        .put("notes", day.notes)
+
+    private fun shiftPatternDayFromJson(json: JSONObject) = ShiftPatternDay(
+        index = json.optInt("index"),
+        kind = runCatching { ShiftPatternDayKind.valueOf(json.optString("kind", ShiftPatternDayKind.Off.name)) }.getOrDefault(ShiftPatternDayKind.Off),
+        label = json.optString("label", "Work"),
+        start = json.optString("start").takeIf { it.isNotBlank() }?.let(LocalTime::parse) ?: LocalTime.of(9, 0),
+        end = json.optString("end").takeIf { it.isNotBlank() }?.let(LocalTime::parse) ?: LocalTime.of(17, 0),
+        location = json.optString("location"),
+        notes = json.optString("notes")
+    )
+
+    private fun premiumToJson(entitlement: PremiumEntitlement) = JSONObject()
+        .put("isPremium", entitlement.isPremium)
+        .put("mockPremiumEnabled", entitlement.mockPremiumEnabled)
+        .put("importMonth", entitlement.importMonth)
+        .put("screenshotImportsThisMonth", entitlement.screenshotImportsThisMonth)
+
+    private fun premiumFromJson(json: JSONObject) = PremiumEntitlement(
+        isPremium = json.optBoolean("isPremium", false),
+        mockPremiumEnabled = json.optBoolean("mockPremiumEnabled", false),
+        importMonth = json.optString("importMonth"),
+        screenshotImportsThisMonth = json.optInt("screenshotImportsThisMonth", 0).coerceAtLeast(0)
     )
 }
+
+private fun WorkShift.shiftCollisionKey(): String = "${date}|${start}|${end}"
 
 private fun JSONArray?.toStrings(): List<String> {
     if (this == null) return emptyList()
@@ -368,6 +592,16 @@ private fun <T> JSONArray?.toObjects(mapper: (JSONObject) -> T): List<T> {
     return List(length()) { index -> mapper(getJSONObject(index)) }
 }
 
+private fun JSONObject?.toDayOffTypes(): Map<LocalDate, ShiftTemplateKind> {
+    if (this == null) return emptyMap()
+    return keys().asSequence().mapNotNull { key ->
+        val date = runCatching { LocalDate.parse(key) }.getOrNull() ?: return@mapNotNull null
+        val kind = runCatching { ShiftTemplateKind.valueOf(optString(key, ShiftTemplateKind.DayOff.name)) }
+            .getOrDefault(ShiftTemplateKind.DayOff)
+        date to kind
+    }.toMap()
+}
+
 fun mergeImportedSchedule(state: AppState, parsed: ParsedSchedule): AppState {
     val importedDates = parsed.shifts.map { it.date }.toSet() + parsed.daysOff
     if (importedDates.isEmpty()) return state
@@ -376,6 +610,20 @@ fun mergeImportedSchedule(state: AppState, parsed: ParsedSchedule): AppState {
         shifts = (state.shifts.filterNot { it.date in importedDates } + parsed.shifts)
             .distinctBy { "${it.date}-${it.start}-${it.end}" }
             .sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start }),
-        daysOff = (state.daysOff - importedDates) + parsed.daysOff
+        daysOff = (state.daysOff - importedDates) + parsed.daysOff,
+        dayOffTypes = (state.dayOffTypes - importedDates) + parsed.daysOff.associateWith { ShiftTemplateKind.DayOff }
+    )
+}
+
+fun removeShiftAndUnlinkTasks(state: AppState, shiftId: String): AppState {
+    return state.copy(
+        shifts = state.shifts.filterNot { it.id == shiftId },
+        tasks = state.tasks.map { task ->
+            if (task.linkedShiftId == shiftId) {
+                task.copy(linkedShiftId = null, alarmAt = null)
+            } else {
+                task
+            }
+        }
     )
 }

@@ -7,8 +7,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
@@ -55,6 +57,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -95,20 +98,37 @@ import com.example.workdayplanner.TrainingImportUiState
 import com.example.workdayplanner.calendar.DeviceCalendar
 import com.example.workdayplanner.data.AccentStyle
 import com.example.workdayplanner.data.AppState
+import com.example.workdayplanner.data.CarryOverBehavior
+import com.example.workdayplanner.data.LinkedShiftType
 import com.example.workdayplanner.data.RepeatRule
 import com.example.workdayplanner.data.TaskItem
 import com.example.workdayplanner.data.TaskCategory
 import com.example.workdayplanner.data.TaskPriority
 import com.example.workdayplanner.data.TaskRecurrence
+import com.example.workdayplanner.data.TaskScheduleClassifier
+import com.example.workdayplanner.data.TaskScheduleInsight
+import com.example.workdayplanner.data.TaskScheduleLabel
+import com.example.workdayplanner.data.TaskTemplate
+import com.example.workdayplanner.data.TaskTimingRule
 import com.example.workdayplanner.data.WorkNote
 import com.example.workdayplanner.data.WorkNoteKind
 import com.example.workdayplanner.data.WidgetLayoutMode
 import com.example.workdayplanner.data.ParsedSchedule
 import com.example.workdayplanner.data.PayEstimator
+import com.example.workdayplanner.data.PayEstimate
+import com.example.workdayplanner.data.PayPeriodType
 import com.example.workdayplanner.data.PaySettings
+import com.example.workdayplanner.data.PremiumAccess
+import com.example.workdayplanner.data.PremiumFeature
 import com.example.workdayplanner.data.ScheduleChangeSet
+import com.example.workdayplanner.data.ScheduleAwareTaskPlanner
+import com.example.workdayplanner.data.ScheduleImportGuidance
 import com.example.workdayplanner.data.ScheduleRisk
 import com.example.workdayplanner.data.ScheduleRiskAnalyzer
+import com.example.workdayplanner.data.ShiftPattern
+import com.example.workdayplanner.data.ShiftPatternDay
+import com.example.workdayplanner.data.ShiftPatternDayKind
+import com.example.workdayplanner.data.ShiftPatternGenerator
 import com.example.workdayplanner.data.TimecardCalculator
 import com.example.workdayplanner.data.TimecardEntry
 import com.example.workdayplanner.data.TrainingItem
@@ -117,6 +137,8 @@ import com.example.workdayplanner.data.WorkChecklistTemplates
 import com.example.workdayplanner.data.WorkImage
 import com.example.workdayplanner.data.WorkShift
 import com.example.workdayplanner.data.WorkEvent
+import com.example.workdayplanner.data.ShiftTemplate
+import com.example.workdayplanner.data.ShiftTemplateKind
 import java.io.File
 import java.time.Duration
 import java.time.DayOfWeek
@@ -129,6 +151,7 @@ import java.time.format.DateTimeFormatter
 private val dateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE, MMM d")
 private val dateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, h:mm a")
 private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm a")
+private val shortDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d")
 private val screenPadding = 18.dp
 private val sectionGap = 14.dp
 
@@ -154,7 +177,8 @@ private enum class TrainingView(val label: String) {
 fun PlannerApp(
     viewModel: PlannerViewModel,
     requestedTaskId: String? = null,
-    onTaskRequestHandled: () -> Unit = {}
+    onTaskRequestHandled: () -> Unit = {},
+    onNotificationPermissionNeeded: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -165,6 +189,7 @@ fun PlannerApp(
     val trainingImportState by viewModel.trainingImportState.collectAsStateWithLifecycle()
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
     val topLevel = listOf(Screen.Tasks, Screen.Notes, Screen.Schedule, Screen.Manager, Screen.Settings)
+    var showPremiumScreen by remember { mutableStateOf(false) }
 
     LaunchedEffect(requestedTaskId, state.tasks) {
         val taskId = requestedTaskId?.takeIf { id -> state.tasks.any { it.id == id } } ?: return@LaunchedEffect
@@ -185,6 +210,7 @@ fun PlannerApp(
                     currentRoute == Screen.Schedule.route -> "Schedule"
                     currentRoute == Screen.Import.route -> "Import"
                     currentRoute == Screen.Settings.route -> "Settings"
+                    showPremiumScreen -> "Premium"
                     currentRoute == Screen.Tasks.route -> "Today"
                     else -> "Workday Planner"
                 }
@@ -228,6 +254,11 @@ fun PlannerApp(
                     state = state,
                     onTaskClick = { navController.navigate("${Screen.TaskDetail.route}/${it.id}") },
                     onEventClick = { navController.navigate("${Screen.EventDetail.route}/${it.id}") },
+                    onAddTask = { navController.navigate("${Screen.TaskDetail.route}/new") },
+                    onAddRepeatingTask = { navController.navigate("${Screen.TaskDetail.route}/new") },
+                    onScheduleShortcut = { navController.navigate(Screen.Schedule.route) },
+                    onImportSchedule = { navController.navigate(Screen.Import.route) },
+                    onMarkTodayOff = { viewModel.addTypedDayOff(LocalDate.now(), ShiftTemplateKind.DayOff) },
                     onAddEvent = { navController.navigate("${Screen.EventDetail.route}/new") },
                     onToggleComplete = viewModel::toggleComplete,
                     onDelete = viewModel::deleteTask,
@@ -237,7 +268,8 @@ fun PlannerApp(
                     onEndLunch = viewModel::endLunch,
                     onClockOut = viewModel::clockOut,
                     onSaveTimecardNote = viewModel::saveTimecardNote,
-                    onAddChecklist = viewModel::addChecklistTemplate
+                    onAddChecklist = viewModel::addChecklistTemplate,
+                    onOpenPremium = { showPremiumScreen = true }
                 )
             }
             composable(Screen.Notes.route) {
@@ -268,39 +300,64 @@ fun PlannerApp(
             composable(Screen.Schedule.route) {
                 ScheduleScreen(
                     state = state,
+                    onAddShift = viewModel::saveShift,
+                    onDeleteShift = viewModel::deleteShift,
+                    onSaveShiftTemplate = viewModel::saveShiftTemplate,
+                    onDeleteShiftTemplate = viewModel::deleteShiftTemplate,
+                    onSaveShiftPattern = viewModel::saveShiftPattern,
+                    onApplyShiftPattern = viewModel::applyShiftPattern,
+                    onSetShiftPatternEnabled = viewModel::setShiftPatternEnabled,
+                    onDeleteShiftPattern = viewModel::deleteShiftPattern,
                     onAddDayOff = viewModel::addDayOff,
+                    onAddTypedDayOff = viewModel::addTypedDayOff,
                     onRemoveDayOff = viewModel::removeDayOff,
                     onClearSchedule = viewModel::clearSchedule,
-                    onImportSchedule = { navController.navigate(Screen.Import.route) }
+                    onImportSchedule = { navController.navigate(Screen.Import.route) },
+                    onOpenPremium = { showPremiumScreen = true }
                 )
             }
             composable(Screen.Import.route) {
                 ImportScreen(
+                    state = state,
                     rawText = importState.rawText,
                     parsed = importState.parsed,
                     changes = importState.changes,
                     isReading = importState.isReadingImage,
                     message = importState.appliedMessage,
                     error = importState.error,
+                    guidance = importState.guidance,
                     onTextChange = viewModel::setImportText,
                     onImagePicked = viewModel::recognizeScheduleImage,
+                    onImageCancelled = viewModel::cancelScheduleImport,
                     onPreview = { viewModel.previewImport() },
-                    onApply = viewModel::applyImport
+                    onApply = { corrected -> viewModel.applyImport(corrected) },
+                    onStartOver = viewModel::resetScheduleImport,
+                    onOpenPremium = { showPremiumScreen = true }
                 )
             }
             composable(Screen.Settings.route) {
-                SettingsScreen(
-                    state = state,
-                    onDarkModeChanged = viewModel::setDarkMode,
-                    onAccentStyleChanged = viewModel::setAccentStyle,
-                    onWidgetLayoutModeChanged = viewModel::setWidgetLayoutMode,
-                    onPaySettingsChanged = viewModel::setPaySettings,
-                    calendars = calendars,
-                    calendarMessage = calendarMessage,
-                    onLoadCalendars = viewModel::loadCalendars,
-                    onSelectCalendar = viewModel::setSelectedCalendar,
-                    onSyncCalendar = viewModel::syncShiftsToCalendar
-                )
+                if (showPremiumScreen) {
+                    PremiumScreen(
+                        state = state,
+                        onMockPremiumChanged = viewModel::setMockPremium,
+                        onBack = { showPremiumScreen = false }
+                    )
+                } else {
+                    SettingsScreen(
+                        state = state,
+                        onDarkModeChanged = viewModel::setDarkMode,
+                        onAccentStyleChanged = viewModel::setAccentStyle,
+                        onWidgetLayoutModeChanged = viewModel::setWidgetLayoutMode,
+                        onPaySettingsChanged = viewModel::setPaySettings,
+                        calendars = calendars,
+                        calendarMessage = calendarMessage,
+                        onLoadCalendars = viewModel::loadCalendars,
+                        onSelectCalendar = viewModel::setSelectedCalendar,
+                        onSyncCalendar = viewModel::syncShiftsToCalendar,
+                        onMockPremiumChanged = viewModel::setMockPremium,
+                        onOpenPremium = { showPremiumScreen = true }
+                    )
+                }
             }
             composable(
                 route = "${Screen.TaskDetail.route}/{taskId}",
@@ -314,6 +371,11 @@ fun PlannerApp(
                         viewModel.saveTask(it)
                         navController.popBackStack()
                     },
+                    onSaveAndContinue = viewModel::saveTask,
+                    onSaveTaskTemplate = viewModel::saveTaskTemplate,
+                    onDeleteTaskTemplate = viewModel::deleteTaskTemplate,
+                    onNotificationPermissionNeeded = onNotificationPermissionNeeded,
+                    onOpenPremium = { showPremiumScreen = true },
                     onCancel = { navController.popBackStack() }
                 )
             }
@@ -345,6 +407,11 @@ private fun TaskListScreen(
     state: AppState,
     onTaskClick: (TaskItem) -> Unit,
     onEventClick: (WorkEvent) -> Unit,
+    onAddTask: () -> Unit,
+    onAddRepeatingTask: () -> Unit,
+    onScheduleShortcut: () -> Unit,
+    onImportSchedule: () -> Unit,
+    onMarkTodayOff: () -> Unit,
     onAddEvent: () -> Unit,
     onToggleComplete: (String) -> Unit,
     onDelete: (String) -> Unit,
@@ -354,7 +421,8 @@ private fun TaskListScreen(
     onEndLunch: () -> Unit,
     onClockOut: () -> Unit,
     onSaveTimecardNote: (String) -> Unit,
-    onAddChecklist: (String) -> Unit
+    onAddChecklist: (String) -> Unit,
+    onOpenPremium: () -> Unit
 ) {
     val today = LocalDate.now()
     val now = LocalDateTime.now()
@@ -365,7 +433,10 @@ private fun TaskListScreen(
             .thenBy { it.deadline ?: LocalDateTime.MAX }
             .thenBy { it.title.lowercase() }
     )
+    val skippedDayOffTasks = tasks.filter { task -> task.isSkippedBecauseDayOff(state, today) }
     val filteredTasks = tasks.filter { task ->
+        if (task in skippedDayOffTasks && taskView in setOf(TaskView.Today, TaskView.Deadline)) return@filter false
+        if (taskView == TaskView.Today && ScheduleAwareTaskPlanner.shouldHideOnDayOff(task, state, today)) return@filter false
         when (taskView) {
             TaskView.Today -> task.deadline?.toLocalDate() == today
             TaskView.Important -> !task.completed && task.priority.sortWeight >= TaskPriority.High.sortWeight
@@ -396,7 +467,7 @@ private fun TaskListScreen(
     val allDueSoonCount = allOpenTasks.count {
         it.deadline?.let { deadline -> !deadline.isBefore(now) && deadline.isBefore(now.plusHours(12)) } == true
     }
-    val allTodayCount = allOpenTasks.count { it.deadline?.toLocalDate() == today }
+    val allTodayCount = allOpenTasks.count { it.deadline?.toLocalDate() == today && !it.isSkippedBecauseDayOff(state, today) }
     val nextTask = allOpenTasks
         .filter { it.deadline != null || it.priority.sortWeight >= TaskPriority.High.sortWeight }
         .sortedWith(
@@ -408,8 +479,21 @@ private fun TaskListScreen(
     val events = state.events.sortedBy { it.startsAt }
     val risks = ScheduleRiskAnalyzer.risks(state, today)
     if (tasks.isEmpty() && events.isEmpty()) {
-        Column(Modifier.fillMaxSize().padding(screenPadding), verticalArrangement = Arrangement.spacedBy(sectionGap)) {
-            CommandCenterCard(state = state)
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
+            verticalArrangement = Arrangement.spacedBy(sectionGap)
+        ) {
+            CommandCenterCard(
+                state = state,
+                overdueTaskCount = allOverdueCount,
+                todayTaskCount = allTodayCount,
+                upcomingAlarmCount = upcomingAlarmCount(state, now),
+                onAddTask = onAddTask,
+                onAddRepeatingTask = onAddRepeatingTask,
+                onScheduleShortcut = onScheduleShortcut,
+                onImportSchedule = onImportSchedule,
+                onMarkTodayOff = onMarkTodayOff
+            )
             ScheduleRiskSection(risks = risks)
             TimecardSection(
                 state = state,
@@ -419,7 +503,7 @@ private fun TaskListScreen(
                 onClockOut = onClockOut,
                 onSaveNote = onSaveTimecardNote
             )
-            ChecklistTemplateSection(onAddChecklist = onAddChecklist)
+            ChecklistTemplateSection(state = state, onAddChecklist = onAddChecklist, onOpenPremium = onOpenPremium)
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Event, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -433,7 +517,19 @@ private fun TaskListScreen(
         modifier = Modifier.fillMaxSize().padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
-        item { CommandCenterCard(state = state) }
+        item {
+            CommandCenterCard(
+                state = state,
+                overdueTaskCount = allOverdueCount,
+                todayTaskCount = allTodayCount,
+                upcomingAlarmCount = upcomingAlarmCount(state, now),
+                onAddTask = onAddTask,
+                onAddRepeatingTask = onAddRepeatingTask,
+                onScheduleShortcut = onScheduleShortcut,
+                onImportSchedule = onImportSchedule,
+                onMarkTodayOff = onMarkTodayOff
+            )
+        }
         if (risks.isNotEmpty()) {
             item { ScheduleRiskSection(risks = risks) }
         }
@@ -447,7 +543,7 @@ private fun TaskListScreen(
                 onSaveNote = onSaveTimecardNote
             )
         }
-        item { ChecklistTemplateSection(onAddChecklist = onAddChecklist) }
+        item { ChecklistTemplateSection(state = state, onAddChecklist = onAddChecklist, onOpenPremium = onOpenPremium) }
         item {
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Event, contentDescription = null)
@@ -481,7 +577,7 @@ private fun TaskListScreen(
             TaskViewSelector(
                 selected = taskView,
                 counts = mapOf(
-                    TaskView.Today to tasks.count { it.deadline?.toLocalDate() == today },
+                    TaskView.Today to tasks.count { it.deadline?.toLocalDate() == today && !it.isSkippedBecauseDayOff(state, today) },
                     TaskView.Important to tasks.count { !it.completed && it.priority.sortWeight >= TaskPriority.High.sortWeight },
                     TaskView.Overdue to tasks.count { !it.completed && it.deadline?.isBefore(now) == true },
                     TaskView.Deadline to tasks.count { !it.completed },
@@ -489,6 +585,11 @@ private fun TaskListScreen(
                 ),
                 onSelected = { taskView = it }
             )
+        }
+        if (taskView == TaskView.Today && skippedDayOffTasks.isNotEmpty()) {
+            item {
+                SkippedDayOffTasksCard(tasks = skippedDayOffTasks, state = state)
+            }
         }
         if (filteredTasks.isEmpty()) {
             item { EmptyState("No ${taskView.label.lowercase()} tasks", "Switch views or add a task when something comes up.") }
@@ -598,6 +699,35 @@ private fun TaskListScreen(
     }
 }
 
+@Composable
+private fun SkippedDayOffTasksCard(tasks: List<TaskItem>, state: AppState) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Skipped because this is a day off.", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            tasks.forEach { task ->
+                val movedTo = TaskRecurrence.nextOccurrence(task, state)?.deadline
+                Text(
+                    "${task.title}: Moved to your next workday${movedTo?.let { " (${it.format(dateTimeFormatter)})" }.orEmpty()}.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
+    }
+}
+
+private fun TaskItem.isSkippedBecauseDayOff(state: AppState, today: LocalDate): Boolean {
+    return !completed &&
+        repeatRule != RepeatRule.None &&
+        skipDaysOff &&
+        deadline?.toLocalDate() == today &&
+        TaskRecurrence.isDayOff(today, state)
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TaskFocusCard(
@@ -695,7 +825,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.taskSection(
     items(tasks, key = { "$title-${it.id}" }) { task ->
         TaskCard(
             task = task,
-            isDayOff = task.deadline?.toLocalDate()?.let { TaskRecurrence.isDayOff(it, state) } == true,
+            scheduleInsight = TaskScheduleClassifier.classify(task, state),
             onClick = { onTaskClick(task) },
             onToggleComplete = { onToggleComplete(task.id) },
             onDelete = { onDelete(task.id) }
@@ -1303,14 +1433,6 @@ private fun NotesScreen(
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         item {
-            WorkImagesSection(
-                images = images,
-                message = imageMessage,
-                onAddImage = onAddImage,
-                onDeleteImage = onDeleteImage
-            )
-        }
-        item {
             DailyNotesSection(
                 todayNotes = todayNotes,
                 recentNotes = recentNotes,
@@ -1319,74 +1441,313 @@ private fun NotesScreen(
                 onCreateTaskFromNote = onCreateTaskFromNote
             )
         }
+        item {
+            WorkImagesSection(
+                images = images,
+                message = imageMessage,
+                onAddImage = onAddImage,
+                onDeleteImage = onDeleteImage
+            )
+        }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CommandCenterCard(state: AppState) {
+private fun CommandCenterCard(
+    state: AppState,
+    overdueTaskCount: Int,
+    todayTaskCount: Int,
+    upcomingAlarmCount: Int,
+    onAddTask: () -> Unit,
+    onAddRepeatingTask: () -> Unit,
+    onScheduleShortcut: () -> Unit,
+    onImportSchedule: () -> Unit,
+    onMarkTodayOff: () -> Unit
+) {
     val today = LocalDate.now()
     val now = LocalDateTime.now()
     val todayShifts = state.shifts.filter { it.date == today }.sortedBy { it.start }
     val nextShift = state.shifts
-        .filter { !it.date.isBefore(today) }
+        .filter { shift -> shift.endDateTime().isAfter(now) }
         .minWithOrNull(compareBy<WorkShift> { it.date }.thenBy { it.start })
-    val openTasks = state.tasks.count { !it.completed }
-    val upcomingEvents = state.events.count { !it.startsAt.toLocalDate().isBefore(today) }
-    val todayNotes = state.notes.count { it.date == today }
+    val todayStatus = today.workStatusLabel(state, todayShifts)
     val todayPay = PayEstimator.estimateDay(state, today)
-    val shiftStatus = todayShifts.firstOrNull()?.let { shift -> shiftStatusLine(now, shift) }
+    val todayTasks = state.tasks.filter { !it.completed && it.deadline?.toLocalDate() == today && !it.isSkippedBecauseDayOff(state, today) }
+    val overdueTasks = state.tasks.filter { !it.completed && it.deadline?.isBefore(now) == true }
+    val remindersToday = state.tasks.filter { !it.completed && it.alarmAt?.toLocalDate() == today }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
-                "Today at work",
-                style = MaterialTheme.typography.titleLarge,
+                "Today",
+                style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
             Text(
-                text = when {
-                    today in state.daysOff -> "You are marked not scheduled today."
-                    todayShifts.isNotEmpty() -> todayShifts.joinToString { "${it.start.format(timeFormatter)} - ${it.end.format(timeFormatter)}" }
-                    nextShift != null -> "Next shift: ${nextShift.date.format(dateFormatter)} at ${nextShift.start.format(timeFormatter)}"
-                    else -> "No upcoming shift imported."
-                },
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                style = MaterialTheme.typography.bodyLarge
+                today.format(dateFormatter),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
             )
-            shiftStatus?.let {
-                Text(
-                    it,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+            DashboardStatusPill(todayStatus)
+            NextShiftDashboardCard(
+                nextShift = nextShift,
+                now = now,
+                hasAnySchedule = state.shifts.isNotEmpty() || state.daysOff.isNotEmpty(),
+                onImportSchedule = onImportSchedule,
+                onScheduleShortcut = onScheduleShortcut
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                DashboardMetricChip("${todayTasks.size.coerceAtLeast(todayTaskCount)} work tasks", MaterialTheme.colorScheme.primary)
+                DashboardMetricChip("${overdueTasks.size.coerceAtLeast(overdueTaskCount)} overdue", Color(0xFFE45B3C))
+                DashboardMetricChip("${remindersToday.size.coerceAtLeast(upcomingAlarmCount)} reminders", Color(0xFFFFB020))
+                if (state.paySettings.showPayOnDashboard && state.paySettings.hourlyRate > 0.0 && todayPay.paidHours > 0.0) {
+                    DashboardMetricChip("$${todayPay.grossPay.toMoneyString()} today", MaterialTheme.colorScheme.tertiary)
+                    DashboardMetricChip("${todayPay.paidHours.toSimpleString()} paid hrs", MaterialTheme.colorScheme.tertiary)
+                }
             }
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                AssistChip(onClick = {}, label = { Text("$openTasks open tasks") })
-                AssistChip(onClick = {}, label = { Text("$upcomingEvents upcoming events") })
-                AssistChip(onClick = {}, label = { Text("$todayNotes notes today") })
-                if (state.paySettings.hourlyRate > 0.0 && todayPay.paidHours > 0.0) {
-                    AssistChip(onClick = {}, label = { Text("$${todayPay.grossPay.toMoneyString()} today") })
-                    AssistChip(onClick = {}, label = { Text("${todayPay.paidHours.toSimpleString()} paid hrs") })
+            if (state.paySettings.showPayOnDashboard && state.paySettings.hourlyRate > 0.0) {
+                DashboardPayEstimateCard(state)
+            }
+            DashboardTaskPreview(
+                "Today’s work tasks",
+                todayTasks,
+                if (state.shifts.isNotEmpty() && state.tasks.none { !it.completed }) {
+                    "No tasks yet. Try an opening, closing, or truck-day task template."
+                } else {
+                    "No tasks due today."
+                }
+            )
+            DashboardTaskPreview("Overdue", overdueTasks, "No overdue tasks.")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                DashboardActionButton("Add shift", Icons.Default.CalendarMonth, onScheduleShortcut, Modifier.weight(1f))
+                DashboardActionButton("Add task", Icons.Default.Add, onAddTask, Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                DashboardActionButton("Import schedule", Icons.Default.FileUpload, onImportSchedule, Modifier.weight(1f), outlined = true)
+                DashboardActionButton("Mark day off", Icons.Default.CalendarMonth, onMarkTodayOff, Modifier.weight(1f), outlined = true)
+            }
+            OutlinedButton(onClick = onAddRepeatingTask, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Add repeating task")
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardStatusPill(label: String) {
+    val color = when (label) {
+        "Workday" -> MaterialTheme.colorScheme.primary
+        "Vacation" -> MaterialTheme.colorScheme.tertiary
+        "Sick Day" -> Color(0xFFE45B3C)
+        "Day Off" -> MaterialTheme.colorScheme.secondary
+        else -> MaterialTheme.colorScheme.outline
+    }
+    AssistChip(
+        onClick = {},
+        label = { Text(label) },
+        colors = AssistChipDefaults.assistChipColors(containerColor = color.copy(alpha = 0.18f), labelColor = color)
+    )
+}
+
+@Composable
+private fun NextShiftDashboardCard(
+    nextShift: WorkShift?,
+    now: LocalDateTime,
+    hasAnySchedule: Boolean,
+    onImportSchedule: () -> Unit,
+    onScheduleShortcut: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text("Next shift", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (nextShift == null) {
+                Text(
+                    if (hasAnySchedule) "No upcoming shift saved." else "Import a schedule screenshot or add your first shift.",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = onImportSchedule, modifier = Modifier.weight(1f)) { Text("Import") }
+                    OutlinedButton(onClick = onScheduleShortcut, modifier = Modifier.weight(1f)) { Text("Add shift") }
+                }
+                return@Column
+            }
+            Text(nextShift.label.ifBlank { "Work" }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("${nextShift.start.format(timeFormatter)} - ${nextShift.end.format(timeFormatter)}", style = MaterialTheme.typography.bodyLarge)
+            Text("Starts ${nextShift.timeUntilShift(now)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            listOf(nextShift.location, nextShift.notes)
+                .filter { it.isNotBlank() }
+                .forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+    }
+}
+
+@Composable
+private fun DashboardTaskPreview(title: String, tasks: List<TaskItem>, emptyText: String) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val visible = tasks.take(3)
+            if (visible.isEmpty()) {
+                Text(emptyText, style = MaterialTheme.typography.bodyMedium)
+            } else {
+                visible.forEach { task ->
+                    Text(task.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                }
+                if (tasks.size > visible.size) {
+                    Text("+${tasks.size - visible.size} more", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
     }
 }
 
-private fun shiftStatusLine(now: LocalDateTime, shift: WorkShift): String {
-    val start = LocalDateTime.of(shift.date, shift.start)
-    val end = LocalDateTime.of(shift.date, shift.end).let {
-        if (shift.end.isBefore(shift.start)) it.plusDays(1) else it
+@Composable
+private fun DashboardActionButton(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    outlined: Boolean = false
+) {
+    if (outlined) {
+        OutlinedButton(onClick = onClick, modifier = modifier) {
+            Icon(icon, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text(label)
+        }
+    } else {
+        Button(onClick = onClick, modifier = modifier) {
+            Icon(icon, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text(label)
+        }
     }
+}
+
+private fun LocalDate.workStatusLabel(state: AppState, todayShifts: List<WorkShift>): String {
+    val kind = state.dayOffTypes[this]
+    return when {
+        kind == ShiftTemplateKind.Vacation -> "Vacation"
+        kind == ShiftTemplateKind.Sick -> "Sick Day"
+        this in state.daysOff || kind == ShiftTemplateKind.DayOff -> "Day Off"
+        todayShifts.isNotEmpty() -> "Workday"
+        state.shifts.isEmpty() && state.daysOff.isEmpty() -> "Unknown"
+        else -> "Unknown"
+    }
+}
+
+@Composable
+private fun DashboardInfoCard(title: String, value: String, detail: String?, strong: Boolean) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (strong) {
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+            } else {
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+            }
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            detail?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardMetricChip(label: String, color: Color) {
+    AssistChip(
+        onClick = {},
+        label = { Text(label) },
+        colors = AssistChipDefaults.assistChipColors(
+            containerColor = color.copy(alpha = 0.16f),
+            labelColor = color
+        )
+    )
+}
+
+@Composable
+private fun DashboardPayEstimateCard(state: AppState) {
+    val week = PayEstimator.estimateWeek(state)
+    val period = PayEstimator.estimatePayPeriod(state)
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.18f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Estimated gross pay before taxes and deductions.", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PayMiniMetric("This week", week, Modifier.weight(1f))
+                PayMiniMetric("Pay period", period, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PayMiniMetric(label: String, estimate: PayEstimate, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("$${estimate.grossPay.toMoneyString()}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text("${estimate.paidHours.toSimpleString()} paid hrs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private fun upcomingAlarmCount(state: AppState, now: LocalDateTime): Int {
+    return state.tasks.count { task ->
+        !task.completed && task.alarmAt?.let { !it.isBefore(now) } == true
+    }
+}
+
+private fun WorkShift.shiftTimeLabel(): String = "${start.format(timeFormatter)} - ${end.format(timeFormatter)}"
+
+private fun WorkShift.startDateTime(): LocalDateTime = LocalDateTime.of(date, start)
+
+private fun WorkShift.endDateTime(): LocalDateTime {
+    val endDateTime = LocalDateTime.of(date, end)
+    return if (end.isBefore(start)) endDateTime.plusDays(1) else endDateTime
+}
+
+private fun WorkShift.durationMinutes(): Long = Duration.between(startDateTime(), endDateTime()).toMinutes().coerceAtLeast(0)
+
+private fun WorkShift.durationLabel(): String {
+    val minutes = durationMinutes()
+    val hours = minutes / 60
+    val remainder = minutes % 60
+    return when {
+        hours > 0 && remainder > 0 -> "${hours}h ${remainder}m"
+        hours > 0 -> "${hours}h"
+        else -> "${remainder}m"
+    }
+}
+
+private fun WorkShift.timeUntilShift(now: LocalDateTime): String {
+    val start = startDateTime()
+    return if (now.isBefore(start)) "in ${Duration.between(now, start).toFriendlyDuration()}" else "now"
+}
+
+private fun shiftStatusLine(now: LocalDateTime, shift: WorkShift): String {
+    val start = shift.startDateTime()
+    val end = shift.endDateTime()
     return when {
         now.isBefore(start) -> "Starts in ${Duration.between(now, start).toFriendlyDuration()}"
         now.isBefore(end) -> "In shift, ${Duration.between(now, end).toFriendlyDuration()} left"
@@ -1520,7 +1881,8 @@ private fun Double.toSignedHours(): String {
 }
 
 @Composable
-private fun ChecklistTemplateSection(onAddChecklist: (String) -> Unit) {
+private fun ChecklistTemplateSection(state: AppState, onAddChecklist: (String) -> Unit, onOpenPremium: () -> Unit) {
+    val unlocked = PremiumAccess.canUse(state, PremiumFeature.TaskTemplates)
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
@@ -1528,6 +1890,10 @@ private fun ChecklistTemplateSection(onAddChecklist: (String) -> Unit) {
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SectionHeader("Checklist templates", "Add a work routine to today's tasks.")
+            if (!unlocked) {
+                PremiumLockedInline(PremiumFeature.TaskTemplates, "Free tasks stay available. Premium unlocks reusable checklist templates.", onOpenPremium)
+                return@Column
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 WorkChecklistTemplates.all.forEach { template ->
                     OutlinedButton(onClick = { onAddChecklist(template.id) }) {
@@ -1873,7 +2239,7 @@ private fun EventCard(event: WorkEvent, onClick: () -> Unit, onDelete: () -> Uni
 @Composable
 private fun TaskCard(
     task: TaskItem,
-    isDayOff: Boolean,
+    scheduleInsight: TaskScheduleInsight,
     onClick: () -> Unit,
     onToggleComplete: () -> Unit,
     onDelete: () -> Unit
@@ -1944,7 +2310,23 @@ private fun TaskCard(
                         )
                     }
                     if (task.repeatRule != RepeatRule.None) AssistChip(onClick = {}, label = { Text(task.repeatLabel()) })
-                    if (isDayOff) AssistChip(onClick = {}, label = { Text("Day off") })
+                    scheduleInsight.labels.forEach { label ->
+                        val color = label.scheduleLabelColor()
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(label.label) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = color.copy(alpha = 0.14f),
+                                labelColor = color
+                            )
+                        )
+                    }
+                }
+                scheduleInsight.warning?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFFFB020), fontWeight = FontWeight.SemiBold)
+                }
+                scheduleInsight.suggestion?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -1952,16 +2334,39 @@ private fun TaskCard(
 }
 
 @Composable
-private fun TaskDetailScreen(state: AppState, task: TaskItem?, onSave: (TaskItem) -> Unit, onCancel: () -> Unit) {
+private fun TaskDetailScreen(
+    state: AppState,
+    task: TaskItem?,
+    onSave: (TaskItem) -> Unit,
+    onSaveAndContinue: (TaskItem) -> Unit,
+    onSaveTaskTemplate: (TaskTemplate) -> Unit,
+    onDeleteTaskTemplate: (String) -> Unit,
+    onNotificationPermissionNeeded: () -> Unit,
+    onOpenPremium: () -> Unit,
+    onCancel: () -> Unit
+) {
     var title by remember(task?.id) { mutableStateOf(task?.title.orEmpty()) }
     var notes by remember(task?.id) { mutableStateOf(task?.notes.orEmpty()) }
     var category by remember(task?.id) { mutableStateOf(task?.category ?: TaskCategory.General) }
     var priority by remember(task?.id) { mutableStateOf(task?.priority ?: TaskPriority.Normal) }
     var deadline by remember(task?.id) { mutableStateOf(task?.deadline ?: LocalDateTime.now().plusHours(4)) }
     var alarmAt by remember(task?.id) { mutableStateOf(task?.alarmAt ?: deadline.minusMinutes(30)) }
+    var reminderEnabled by remember(task?.id) { mutableStateOf(task?.alarmAt != null) }
     var repeatRule by remember(task?.id) { mutableStateOf(task?.repeatRule ?: RepeatRule.None) }
     var repeatDays by remember(task?.id) { mutableStateOf(task?.repeatDays ?: emptySet()) }
     var skipDaysOff by remember(task?.id) { mutableStateOf(task?.skipDaysOff ?: true) }
+    var workRelated by remember(task?.id) { mutableStateOf(task?.workRelated ?: true) }
+    var linkedShiftId by remember(task?.id) { mutableStateOf(task?.linkedShiftId) }
+    var linkedShiftType by remember(task?.id) { mutableStateOf(task?.linkedShiftType ?: LinkedShiftType.Any) }
+    var timingRule by remember(task?.id) { mutableStateOf(task?.timingRule ?: TaskTimingRule.AtTime) }
+    var carryOverBehavior by remember(task?.id) { mutableStateOf(task?.carryOverBehavior ?: CarryOverBehavior.None) }
+    var alarmOffsetMinutes by remember(task?.id) { mutableStateOf((task?.alarmOffsetMinutes ?: 30).toString()) }
+    var completed by remember(task?.id) { mutableStateOf(task?.completed ?: false) }
+    var showAdvancedRepeat by remember(task?.id) { mutableStateOf(task?.repeatRule == RepeatRule.CustomDays) }
+    var showMoreRules by remember(task?.id) { mutableStateOf(false) }
+    val advancedRulesUnlocked = PremiumAccess.canUse(state, PremiumFeature.AdvancedTaskRules)
+    val templatesUnlocked = PremiumAccess.canUse(state, PremiumFeature.TaskTemplates)
+    val context = LocalContext.current
     val nextShift = remember(state.shifts) {
         val now = LocalDateTime.now()
         state.shifts
@@ -1969,65 +2374,482 @@ private fun TaskDetailScreen(state: AppState, task: TaskItem?, onSave: (TaskItem
             .filter { it.isAfter(now) }
             .minOrNull()
     }
+    fun resetForAnother() {
+        title = ""
+        notes = ""
+        category = TaskCategory.General
+        priority = TaskPriority.Normal
+        val base = LocalDateTime.now().plusHours(4)
+        deadline = base
+        alarmAt = base.minusMinutes(30)
+        reminderEnabled = false
+        repeatRule = RepeatRule.None
+        repeatDays = emptySet()
+        skipDaysOff = true
+        workRelated = true
+        linkedShiftId = null
+        linkedShiftType = LinkedShiftType.Any
+        timingRule = TaskTimingRule.AtTime
+        carryOverBehavior = CarryOverBehavior.None
+        alarmOffsetMinutes = "30"
+        completed = false
+        showAdvancedRepeat = false
+    }
+    fun buildTask(id: String = task?.id ?: java.util.UUID.randomUUID().toString()): TaskItem {
+        return TaskItem(
+            id = id,
+            title = title.trim(),
+            notes = notes.trim(),
+            category = category,
+            priority = priority,
+            deadline = deadline,
+            alarmAt = alarmAt.takeIf { reminderEnabled },
+            repeatRule = repeatRule,
+            repeatDays = if (repeatRule == RepeatRule.CustomDays) repeatDays else emptySet(),
+            skipDaysOff = skipDaysOff,
+            workRelated = workRelated,
+            linkedShiftId = linkedShiftId,
+            linkedShiftType = linkedShiftType,
+            timingRule = timingRule,
+            carryOverBehavior = carryOverBehavior,
+            alarmOffsetMinutes = alarmOffsetMinutes.toLongOrNull()?.coerceAtLeast(0) ?: 30,
+            completed = completed
+        )
+    }
+    fun requestReminderPermissionIfNeeded() {
+        if (
+            reminderEnabled &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            onNotificationPermissionNeeded()
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, minLines = 3, modifier = Modifier.fillMaxWidth())
-        TaskCategorySelector(selected = category, onSelected = { category = it })
-        TaskPrioritySelector(selected = priority, onSelected = { priority = it })
-        DateTimeRow("Deadline", deadline, onChanged = { deadline = it })
-        DateTimeRow("Alarm", alarmAt, onChanged = { alarmAt = it })
-        nextShift?.let { shiftStart ->
-            OutlinedButton(
-                onClick = {
-                    deadline = shiftStart.minusMinutes(30)
-                    alarmAt = deadline.minusMinutes(30)
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Set due before next shift (${shiftStart.format(dateTimeFormatter)})")
+        Text(task?.let { "Edit task" } ?: "Add task", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        TaskTemplateChips(
+            templates = taskTemplatesFor(state),
+            onApply = { template ->
+                if (!templatesUnlocked) {
+                    onOpenPremium()
+                    return@TaskTemplateChips
+                }
+                title = template.title
+                notes = template.notes
+                category = template.category
+                priority = template.priority
+                repeatRule = template.repeatRule
+                repeatDays = emptySet()
+                workRelated = template.workRelated
+                reminderEnabled = template.reminderEnabled
+                linkedShiftType = template.linkedShiftType
+                timingRule = template.timingRule
+                carryOverBehavior = template.carryOverBehavior
+                alarmOffsetMinutes = template.alarmOffsetMinutes.toString()
+            },
+            onSaveTemplate = onSaveTaskTemplate,
+            onDeleteTemplate = onDeleteTaskTemplate,
+            premiumUnlocked = templatesUnlocked,
+            onOpenPremium = onOpenPremium
+        )
+        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Task", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+                TaskCategorySelector(selected = category, onSelected = { category = it })
+                TaskPrioritySelector(selected = priority, onSelected = { priority = it })
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Work-related", style = MaterialTheme.typography.bodyLarge)
+                        Text("Use this for shift planning and work task labels.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = workRelated, onCheckedChange = { workRelated = it })
+                }
             }
         }
-        RepeatRuleDropdown(selected = repeatRule, onSelected = { repeatRule = it })
-        if (repeatRule == RepeatRule.CustomDays) {
-            CustomRepeatDays(
-                selectedDays = repeatDays,
-                onToggle = { day ->
-                    repeatDays = if (day in repeatDays) repeatDays - day else repeatDays + day
+        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("When", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                TaskTimingRuleChips(selected = timingRule, onSelected = { selected ->
+                    timingRule = selected
+                    reminderEnabled = true
+                    when (selected) {
+                        TaskTimingRule.AtTime -> Unit
+                        TaskTimingRule.BeforeNextShift -> nextShift?.let {
+                            deadline = it.minusMinutes(alarmOffsetMinutes.toLongOrNull() ?: 30)
+                            alarmAt = deadline
+                        }
+                        TaskTimingRule.DuringShift -> nextShift?.let {
+                            deadline = it.plusMinutes(30)
+                            alarmAt = deadline
+                        }
+                        TaskTimingRule.AfterShift -> {
+                            val shift = state.shifts.filter { it.date.atTime(it.start).isAfter(LocalDateTime.now()) }.minWithOrNull(compareBy<WorkShift> { it.date }.thenBy { it.start })
+                            shift?.let {
+                                val end = it.date.atTime(it.end).let { endTime -> if (it.end.isBefore(it.start)) endTime.plusDays(1) else endTime }
+                                deadline = end.plusMinutes(alarmOffsetMinutes.toLongOrNull() ?: 30)
+                                alarmAt = deadline
+                            }
+                        }
+                        TaskTimingRule.WorkdaysOnly -> skipDaysOff = true
+                    }
+                })
+                if (timingRule == TaskTimingRule.AtTime || timingRule == TaskTimingRule.WorkdaysOnly) {
+                    DateTimeRow("Deadline", deadline, onChanged = { deadline = it })
+                } else {
+                    Text("The exact reminder time will follow your saved shift schedule.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Reminder", style = MaterialTheme.typography.bodyLarge)
+                        Text("Workday Planner uses reminders only for tasks you create.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("You can turn reminders off anytime.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = reminderEnabled, onCheckedChange = { reminderEnabled = it })
+                }
+                if (reminderEnabled) {
+                    if (timingRule == TaskTimingRule.AtTime || timingRule == TaskTimingRule.WorkdaysOnly) {
+                        DateTimeRow("Reminder time", alarmAt, onChanged = { alarmAt = it })
+                    }
+                    OutlinedTextField(
+                        value = alarmOffsetMinutes,
+                        onValueChange = { alarmOffsetMinutes = it.filter(Char::isDigit).take(4) },
+                        label = { Text("Alarm offset minutes") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = skipDaysOff, onCheckedChange = { skipDaysOff = it })
-            Text("Skip days off when repeating")
+        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("More rules", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { showMoreRules = !showMoreRules }) { Text(if (showMoreRules) "Hide" else "Show") }
+                }
+                if (!showMoreRules) {
+                    Text("Repeat, shift type, day-off, and carry-over rules.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (showMoreRules) {
+                    if (!advancedRulesUnlocked) {
+                        PremiumLockedInline(PremiumFeature.AdvancedTaskRules, "Basic deadlines and reminders stay free. Premium unlocks shift-aware repeat and carry-over rules.", onOpenPremium)
+                        return@Column
+                    }
+                Text("Repeat", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                RepeatRuleChips(selected = repeatRule, onSelected = {
+                    repeatRule = it
+                    if (it != RepeatRule.CustomDays) repeatDays = emptySet()
+                    linkedShiftType = when (it) {
+                        RepeatRule.OpeningShifts -> LinkedShiftType.Opening
+                        RepeatRule.ClosingShifts -> LinkedShiftType.Closing
+                        RepeatRule.TruckDays -> LinkedShiftType.Truck
+                        else -> linkedShiftType
+                    }
+                })
+                if (showAdvancedRepeat || repeatRule == RepeatRule.CustomDays) {
+                    CustomRepeatDays(
+                        selectedDays = repeatDays,
+                        onToggle = { day ->
+                            repeatDays = if (day in repeatDays) repeatDays - day else repeatDays + day
+                        }
+                    )
+                } else {
+                    TextButton(onClick = {
+                        showAdvancedRepeat = true
+                        repeatRule = RepeatRule.CustomDays
+                    }) { Text("Choose specific days") }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = skipDaysOff, onCheckedChange = { skipDaysOff = it })
+                    Text("Skip days off")
+                }
+                LinkedShiftTypeChips(selected = linkedShiftType, onSelected = { linkedShiftType = it })
+                CarryOverChips(selected = carryOverBehavior, onSelected = { carryOverBehavior = it })
+                }
+            }
+        }
+        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Shift link", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                ShiftLinkChips(
+                    shifts = state.shifts,
+                    selectedShiftId = linkedShiftId,
+                    onSelected = { linkedShiftId = it }
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Completed", style = MaterialTheme.typography.bodyLarge)
+                        Text("Mark done if you are editing an existing task.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Checkbox(checked = completed, onCheckedChange = { completed = it })
+                }
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(
                 enabled = title.isNotBlank() && (repeatRule != RepeatRule.CustomDays || repeatDays.isNotEmpty()),
                 onClick = {
+                    requestReminderPermissionIfNeeded()
+                    onSave(buildTask())
+                },
+                modifier = Modifier.weight(1f)
+            ) { Text("Save task") }
+            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("Cancel") }
+        }
+        if (task == null) {
+            OutlinedButton(
+                enabled = title.isNotBlank() && (repeatRule != RepeatRule.CustomDays || repeatDays.isNotEmpty()),
+                onClick = {
+                    requestReminderPermissionIfNeeded()
+                    onSaveAndContinue(buildTask(java.util.UUID.randomUUID().toString()))
+                    resetForAnother()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Save and add another")
+            }
+        }
+    }
+}
+
+private val builtInTaskTemplates = listOf(
+    TaskTemplate(id = "builtin-opening-checklist", name = "Opening shift checklist", title = "Opening shift checklist", notes = "Unlock/setup, check schedule, prep station, and note issues.", category = TaskCategory.Prep, priority = TaskPriority.High, repeatRule = RepeatRule.OpeningShifts, linkedShiftType = LinkedShiftType.Opening, timingRule = TaskTimingRule.BeforeNextShift, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
+    TaskTemplate(id = "builtin-closing-checklist", name = "Closing shift checklist", title = "Closing shift checklist", notes = "Clean area, finish closing tasks, and leave notes for next shift.", category = TaskCategory.Cleaning, priority = TaskPriority.High, repeatRule = RepeatRule.ClosingShifts, linkedShiftType = LinkedShiftType.Closing, timingRule = TaskTimingRule.DuringShift, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
+    TaskTemplate(id = "builtin-truck-checklist", name = "Truck/order day checklist", title = "Truck/order day checklist", notes = "Check order, truck notes, inventory gaps, and follow-up items.", category = TaskCategory.Orders, priority = TaskPriority.High, repeatRule = RepeatRule.TruckDays, linkedShiftType = LinkedShiftType.Truck, timingRule = TaskTimingRule.BeforeNextShift, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
+    TaskTemplate(id = "builtin-inventory-checklist", name = "Inventory day checklist", title = "Inventory day checklist", notes = "Counts, outs, order review, and shrink notes.", category = TaskCategory.Orders, priority = TaskPriority.High, linkedShiftType = LinkedShiftType.Inventory, timingRule = TaskTimingRule.BeforeNextShift, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
+    TaskTemplate(id = "builtin-manager-handoff", name = "Manager handoff checklist", title = "Manager handoff checklist", notes = "Open issues, unfinished tasks, associate follow-up, and schedule notes.", category = TaskCategory.Admin, priority = TaskPriority.High, timingRule = TaskTimingRule.AfterShift, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
+    TaskTemplate(id = "builtin-pre-work", name = "Personal pre-work checklist", title = "Personal pre-work checklist", notes = "Uniform, lunch, keys/wallet, and anything needed before leaving.", category = TaskCategory.Personal, priority = TaskPriority.Normal, repeatRule = RepeatRule.EveryWorkday, timingRule = TaskTimingRule.BeforeNextShift, linkedShiftType = LinkedShiftType.Any, builtIn = true),
+    TaskTemplate(id = "builtin-bring-uniform", name = "Bring uniform", title = "Bring uniform", category = TaskCategory.Personal, repeatRule = RepeatRule.EveryWorkday, timingRule = TaskTimingRule.BeforeNextShift, builtIn = true),
+    TaskTemplate(id = "builtin-pack-lunch", name = "Pack lunch", title = "Pack lunch", category = TaskCategory.Personal, priority = TaskPriority.Low, repeatRule = RepeatRule.EveryWorkday, timingRule = TaskTimingRule.BeforeNextShift, builtIn = true),
+    TaskTemplate(id = "builtin-check-schedule", name = "Check schedule", title = "Check schedule", category = TaskCategory.Admin, repeatRule = RepeatRule.Weekdays, builtIn = true),
+    TaskTemplate(id = "builtin-request-day-off", name = "Request day off", title = "Submit time off request", category = TaskCategory.Admin, priority = TaskPriority.High, builtIn = true),
+    TaskTemplate(id = "builtin-paycheck-check", name = "Paycheck check", title = "Check paycheck", category = TaskCategory.Admin, repeatRule = RepeatRule.Weekly, builtIn = true),
+    TaskTemplate(id = "builtin-inventory-order", name = "Inventory/order reminder", title = "Inventory/order task", category = TaskCategory.Orders, priority = TaskPriority.High, builtIn = true)
+)
+
+private fun taskTemplatesFor(state: AppState): List<TaskTemplate> = builtInTaskTemplates + state.taskTemplates
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TaskTemplateChips(
+    templates: List<TaskTemplate>,
+    onApply: (TaskTemplate) -> Unit,
+    onSaveTemplate: (TaskTemplate) -> Unit,
+    onDeleteTemplate: (String) -> Unit,
+    premiumUnlocked: Boolean,
+    onOpenPremium: () -> Unit
+) {
+    var editorOpen by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<TaskTemplate?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("Task templates", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            TextButton(onClick = {
+                if (!premiumUnlocked) {
+                    onOpenPremium()
+                    return@TextButton
+                }
+                editing = null
+                editorOpen = !editorOpen
+            }) { Text(if (editorOpen) "Hide" else "Create") }
+        }
+        if (!premiumUnlocked) {
+            PremiumLockedInline(PremiumFeature.TaskTemplates, "Basic task entry stays free. Premium unlocks reusable templates.", onOpenPremium)
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            templates.forEach { template ->
+                OutlinedButton(onClick = { onApply(template) }) {
+                    Text(template.name)
+                }
+            }
+        }
+        templates.filterNot { it.builtIn }.forEach { template ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(template.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = {
+                    editing = template
+                    editorOpen = true
+                }) { Text("Edit") }
+                TextButton(onClick = { onDeleteTemplate(template.id) }) { Text("Delete") }
+            }
+        }
+        if (editorOpen) {
+            TaskTemplateEditor(
+                template = editing,
+                onSave = {
+                    onSaveTemplate(it)
+                    editorOpen = false
+                    editing = null
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun TaskTemplateEditor(template: TaskTemplate?, onSave: (TaskTemplate) -> Unit) {
+    var name by remember(template?.id) { mutableStateOf(template?.name.orEmpty()) }
+    var title by remember(template?.id) { mutableStateOf(template?.title.orEmpty()) }
+    var notes by remember(template?.id) { mutableStateOf(template?.notes.orEmpty()) }
+    var category by remember(template?.id) { mutableStateOf(template?.category ?: TaskCategory.General) }
+    var priority by remember(template?.id) { mutableStateOf(template?.priority ?: TaskPriority.Normal) }
+    var repeatRule by remember(template?.id) { mutableStateOf(template?.repeatRule ?: RepeatRule.None) }
+    var reminderEnabled by remember(template?.id) { mutableStateOf(template?.reminderEnabled ?: false) }
+    Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(template?.let { "Edit task template" } ?: "Create task template", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Template name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Task title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+            TaskCategorySelector(selected = category, onSelected = { category = it })
+            TaskPrioritySelector(selected = priority, onSelected = { priority = it })
+            RepeatRuleChips(selected = repeatRule, onSelected = { repeatRule = it })
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = reminderEnabled, onCheckedChange = { reminderEnabled = it })
+                Text("Reminder on when applied")
+            }
+            Button(
+                enabled = name.isNotBlank() && title.isNotBlank(),
+                onClick = {
                     onSave(
-                        TaskItem(
-                            id = task?.id ?: java.util.UUID.randomUUID().toString(),
+                        TaskTemplate(
+                            id = template?.id ?: java.util.UUID.randomUUID().toString(),
+                            name = name.trim(),
                             title = title.trim(),
                             notes = notes.trim(),
                             category = category,
                             priority = priority,
-                            deadline = deadline,
-                            alarmAt = alarmAt,
                             repeatRule = repeatRule,
-                            repeatDays = if (repeatRule == RepeatRule.CustomDays) repeatDays else emptySet(),
-                            skipDaysOff = skipDaysOff,
-                            completed = task?.completed ?: false
+                            reminderEnabled = reminderEnabled
                         )
                     )
-                }
-            ) { Text("Save task") }
-            OutlinedButton(onClick = onCancel) { Text("Cancel") }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Save template") }
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun QuickTimingChips(
+    onBeforeNextShift: (() -> Unit)?,
+    onToday: () -> Unit,
+    onTomorrow: () -> Unit
+) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        onBeforeNextShift?.let {
+            OutlinedButton(onClick = it) { Text("Before next shift") }
+        }
+        OutlinedButton(onClick = onToday) { Text("Today") }
+        OutlinedButton(onClick = onTomorrow) { Text("Tomorrow") }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TaskTimingRuleChips(selected: TaskTimingRule, onSelected: (TaskTimingRule) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        TaskTimingRule.entries.forEach { rule ->
+            FilterChip(
+                selected = selected == rule,
+                onClick = { onSelected(rule) },
+                label = { Text(rule.label) }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LinkedShiftTypeChips(selected: LinkedShiftType, onSelected: (LinkedShiftType) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Linked shift type", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LinkedShiftType.entries.forEach { type ->
+                FilterChip(selected = selected == type, onClick = { onSelected(type) }, label = { Text(type.label) })
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CarryOverChips(selected: CarryOverBehavior, onSelected: (CarryOverBehavior) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Unfinished work tasks", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            CarryOverBehavior.entries.forEach { behavior ->
+                FilterChip(selected = selected == behavior, onClick = { onSelected(behavior) }, label = { Text(behavior.label) })
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RepeatRuleChips(selected: RepeatRule, onSelected: (RepeatRule) -> Unit) {
+    val rules = listOf(
+        RepeatRule.None,
+        RepeatRule.Daily,
+        RepeatRule.Weekdays,
+        RepeatRule.Weekly,
+        RepeatRule.EveryWorkday,
+        RepeatRule.OpeningShifts,
+        RepeatRule.ClosingShifts,
+        RepeatRule.TruckDays
+    ) +
+        listOfNotNull(RepeatRule.CustomDays.takeIf { selected == RepeatRule.CustomDays })
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        rules.forEach { rule ->
+            if (rule == selected) {
+                Button(onClick = { onSelected(rule) }) { Text(rule.displayName()) }
+            } else {
+                OutlinedButton(onClick = { onSelected(rule) }) { Text(rule.displayName()) }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ShiftLinkChips(
+    shifts: List<WorkShift>,
+    selectedShiftId: String?,
+    onSelected: (String?) -> Unit
+) {
+    val upcoming = shifts
+        .filter { !it.date.isBefore(LocalDate.now().minusDays(1)) }
+        .sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start })
+        .take(6)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (selectedShiftId == null) {
+                Button(onClick = { onSelected(null) }) { Text("No linked shift") }
+            } else {
+                OutlinedButton(onClick = { onSelected(null) }) { Text("No linked shift") }
+            }
+            upcoming.forEach { shift ->
+                if (shift.id == selectedShiftId) {
+                    Button(onClick = { onSelected(shift.id) }) { Text(shift.shortShiftLabel()) }
+                } else {
+                    OutlinedButton(onClick = { onSelected(shift.id) }) { Text(shift.shortShiftLabel()) }
+                }
+            }
+        }
+        if (upcoming.isEmpty()) {
+            Text("Import a schedule to link tasks to a shift.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+private fun WorkShift.shortShiftLabel(): String {
+    return "${date.format(shortDateFormatter)} ${start.format(timeFormatter)}"
 }
 
 @Composable
@@ -2168,6 +2990,18 @@ private fun TaskCategory.categoryColor(): Color = when (this) {
 }
 
 @Composable
+private fun TaskScheduleLabel.scheduleLabelColor(): Color = when (this) {
+    TaskScheduleLabel.BeforeWork -> MaterialTheme.colorScheme.primary
+    TaskScheduleLabel.AfterWork -> MaterialTheme.colorScheme.secondary
+    TaskScheduleLabel.DayOffTask -> Color(0xFF7E8798)
+    TaskScheduleLabel.DueDuringShift -> Color(0xFFFFB020)
+    TaskScheduleLabel.QuickTask -> MaterialTheme.colorScheme.outline
+    TaskScheduleLabel.Overdue -> Color(0xFFFF5A66)
+    TaskScheduleLabel.RepeatsNextWorkday -> Color(0xFF54D17A)
+    TaskScheduleLabel.SkippedDayOff -> Color(0xFFFFB020)
+}
+
+@Composable
 private fun LocalDateTime.deadlineColor(): Color {
     val now = LocalDateTime.now()
     return when {
@@ -2210,10 +3044,10 @@ private fun DateTimeRow(label: String, value: LocalDateTime, onChanged: (LocalDa
 }
 
 @Composable
-private fun DateOnlyRow(label: String, value: LocalDate?, onChanged: (LocalDate) -> Unit) {
+private fun DateOnlyRow(label: String, value: LocalDate?, onChanged: (LocalDate) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val pickerDate = value ?: LocalDate.now()
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.fillMaxWidth()) {
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.labelLarge)
             Text(value?.format(dateFormatter) ?: "No due date", style = MaterialTheme.typography.bodyLarge)
@@ -2297,8 +3131,11 @@ private fun StyleSection(
     state: AppState,
     onDarkModeChanged: (Boolean) -> Unit,
     onAccentStyleChanged: (AccentStyle) -> Unit,
-    onWidgetLayoutModeChanged: (WidgetLayoutMode) -> Unit
+    onWidgetLayoutModeChanged: (WidgetLayoutMode) -> Unit,
+    onOpenPremium: () -> Unit
 ) {
+    val themeUnlocked = PremiumAccess.canUse(state, PremiumFeature.ThemeCustomization)
+    val widgetUnlocked = PremiumAccess.canUse(state, PremiumFeature.Widgets)
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
@@ -2320,26 +3157,30 @@ private fun StyleSection(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 AccentStyle.entries.forEach { style ->
+                    val canSelect = themeUnlocked || style == state.accentStyle
                     if (state.accentStyle == style) {
                         Button(onClick = { onAccentStyleChanged(style) }, modifier = Modifier.weight(1f)) {
                             Text(style.label)
                         }
                     } else {
-                        OutlinedButton(onClick = { onAccentStyleChanged(style) }, modifier = Modifier.weight(1f)) {
+                        OutlinedButton(onClick = { if (canSelect) onAccentStyleChanged(style) else onOpenPremium() }, modifier = Modifier.weight(1f)) {
                             Text(style.label)
                         }
                     }
                 }
             }
+            if (!themeUnlocked) PremiumLockedInline(PremiumFeature.ThemeCustomization, "Dark mode stays free. Premium unlocks accent customization.", onOpenPremium)
             Text("Planner widget", style = MaterialTheme.typography.labelLarge)
+            if (!widgetUnlocked) PremiumLockedInline(PremiumFeature.Widgets, "Premium unlocks widget customization and richer widget layouts.", onOpenPremium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 WidgetLayoutMode.entries.forEach { mode ->
+                    val canSelect = widgetUnlocked || mode == state.widgetLayoutMode
                     if (state.widgetLayoutMode == mode) {
                         Button(onClick = { onWidgetLayoutModeChanged(mode) }, modifier = Modifier.weight(1f)) {
                             Text(mode.label)
                         }
                     } else {
-                        OutlinedButton(onClick = { onWidgetLayoutModeChanged(mode) }, modifier = Modifier.weight(1f)) {
+                        OutlinedButton(onClick = { if (canSelect) onWidgetLayoutModeChanged(mode) else onOpenPremium() }, modifier = Modifier.weight(1f)) {
                             Text(mode.label)
                         }
                     }
@@ -2361,20 +3202,26 @@ private fun StyleSection(
 @Composable
 private fun PayEstimateSection(
     state: AppState,
-    onPaySettingsChanged: (PaySettings) -> Unit
+    onPaySettingsChanged: (PaySettings) -> Unit,
+    onOpenPremium: () -> Unit
 ) {
     val settings = state.paySettings
+    val unlocked = PremiumAccess.canUse(state, PremiumFeature.PayEstimator)
     var hourlyRate by remember(settings.hourlyRate) { mutableStateOf(settings.hourlyRate.takeIf { it > 0.0 }?.toString() ?: "") }
     var lunchMinutes by remember(settings.unpaidLunchMinutes) { mutableStateOf(settings.unpaidLunchMinutes.toString()) }
     var overtimeThreshold by remember(settings.overtimeThresholdHours) { mutableStateOf(settings.overtimeThresholdHours.toSimpleString()) }
     var overtimeMultiplier by remember(settings.overtimeMultiplier) { mutableStateOf(settings.overtimeMultiplier.toSimpleString()) }
-    var estimatedTaxRate by remember(settings.estimatedTaxRate) { mutableStateOf(settings.estimatedTaxRate.toSimpleString()) }
-    var estimatedDeductionRate by remember(settings.estimatedDeductionRate) { mutableStateOf(settings.estimatedDeductionRate.toSimpleString()) }
+    var dailyOvertimeThreshold by remember(settings.dailyOvertimeThresholdHours) { mutableStateOf(settings.dailyOvertimeThresholdHours.takeIf { it > 0.0 }?.toSimpleString() ?: "") }
+    var nightExtra by remember(settings.nightShiftExtraAmount) { mutableStateOf(settings.nightShiftExtraAmount.takeIf { it > 0.0 }?.toSimpleString() ?: "") }
+    var weekendExtra by remember(settings.weekendExtraAmount) { mutableStateOf(settings.weekendExtraAmount.takeIf { it > 0.0 }?.toSimpleString() ?: "") }
+    var customShiftLabel by remember(settings.customShiftTypeLabel) { mutableStateOf(settings.customShiftTypeLabel) }
+    var customShiftExtra by remember(settings.customShiftTypeExtraAmount) { mutableStateOf(settings.customShiftTypeExtraAmount.takeIf { it > 0.0 }?.toSimpleString() ?: "") }
+    var payPeriodType by remember(settings.payPeriodType) { mutableStateOf(settings.payPeriodType) }
+    var customPayPeriodStart by remember(settings.customPayPeriodStart) { mutableStateOf(settings.customPayPeriodStart) }
+    var showPayOnDashboard by remember(settings.showPayOnDashboard) { mutableStateOf(settings.showPayOnDashboard) }
     val todayEstimate = PayEstimator.estimateDay(state)
     val weekEstimate = PayEstimator.estimateWeek(state)
-    val weekTax = weekEstimate.grossPay * (settings.estimatedTaxRate / 100.0)
-    val weekDeductions = weekEstimate.grossPay * (settings.estimatedDeductionRate / 100.0)
-    val weekNet = (weekEstimate.grossPay - weekTax - weekDeductions).coerceAtLeast(0.0)
+    val payPeriodEstimate = PayEstimator.estimatePayPeriod(state)
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -2384,10 +3231,21 @@ private fun PayEstimateSection(
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Pay estimate", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "Estimate pay from imported shifts. This is for planning, not payroll.",
+                "Estimated gross pay before taxes and deductions. This is an estimate, not payroll advice.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (!unlocked) {
+                PremiumLockedInline(PremiumFeature.PayEstimator, "Your schedule stays available. Premium unlocks wage, overtime, and pay-period estimates.", onOpenPremium)
+                return@Column
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Show on dashboard", style = MaterialTheme.typography.bodyLarge)
+                    Text("Keep wage data local on this device.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = showPayOnDashboard, onCheckedChange = { showPayOnDashboard = it })
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedTextField(
                     value = hourlyRate,
@@ -2422,19 +3280,28 @@ private fun PayEstimateSection(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedTextField(
-                    value = estimatedTaxRate,
-                    onValueChange = { estimatedTaxRate = it },
-                    label = { Text("Tax %") },
+                    value = dailyOvertimeThreshold,
+                    onValueChange = { dailyOvertimeThreshold = it },
+                    label = { Text("Daily OT hrs") },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedTextField(
-                    value = estimatedDeductionRate,
-                    onValueChange = { estimatedDeductionRate = it },
-                    label = { Text("Deduct %") },
+                    value = nightExtra,
+                    onValueChange = { nightExtra = it },
+                    label = { Text("Night +$/hr") },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(value = weekendExtra, onValueChange = { weekendExtra = it }, label = { Text("Weekend +$/hr") }, singleLine = true, modifier = Modifier.weight(1f))
+                OutlinedTextField(value = customShiftExtra, onValueChange = { customShiftExtra = it }, label = { Text("Custom +$/hr") }, singleLine = true, modifier = Modifier.weight(1f))
+            }
+            OutlinedTextField(value = customShiftLabel, onValueChange = { customShiftLabel = it }, label = { Text("Custom shift type") }, placeholder = { Text("Inventory") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            PayPeriodTypeChips(selected = payPeriodType, onSelected = { payPeriodType = it })
+            if (payPeriodType in setOf(PayPeriodType.Biweekly, PayPeriodType.Custom)) {
+                DateOnlyRow("Pay period start", customPayPeriodStart, onChanged = { customPayPeriodStart = it })
             }
             Button(
                 onClick = {
@@ -2444,8 +3311,16 @@ private fun PayEstimateSection(
                             unpaidLunchMinutes = lunchMinutes.toIntOrNull()?.coerceAtLeast(0) ?: 0,
                             overtimeThresholdHours = overtimeThreshold.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 40.0,
                             overtimeMultiplier = overtimeMultiplier.toDoubleOrNull()?.coerceAtLeast(1.0) ?: 1.5,
-                            estimatedTaxRate = estimatedTaxRate.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 18.0,
-                            estimatedDeductionRate = estimatedDeductionRate.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 5.0
+                            dailyOvertimeThresholdHours = dailyOvertimeThreshold.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+                            nightShiftExtraAmount = nightExtra.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+                            weekendExtraAmount = weekendExtra.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+                            customShiftTypeLabel = customShiftLabel.trim(),
+                            customShiftTypeExtraAmount = customShiftExtra.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+                            payPeriodType = payPeriodType,
+                            customPayPeriodStart = customPayPeriodStart,
+                            showPayOnDashboard = showPayOnDashboard,
+                            estimatedTaxRate = settings.estimatedTaxRate,
+                            estimatedDeductionRate = settings.estimatedDeductionRate
                         )
                     )
                 },
@@ -2455,11 +3330,9 @@ private fun PayEstimateSection(
             }
             PayEstimateLine("Today", todayEstimate.grossPay, todayEstimate.paidHours, todayEstimate.overtimeHours)
             PayEstimateLine("This week", weekEstimate.grossPay, weekEstimate.paidHours, weekEstimate.overtimeHours)
+            PayEstimateLine("Pay period", payPeriodEstimate.grossPay, payPeriodEstimate.paidHours, payPeriodEstimate.overtimeHours)
             EarningsSummaryCard(
-                grossPay = weekEstimate.grossPay,
-                tax = weekTax,
-                deductions = weekDeductions,
-                netPay = weekNet,
+                estimate = weekEstimate,
                 regularHours = weekEstimate.regularHours,
                 overtimeHours = weekEstimate.overtimeHours,
                 paidHours = weekEstimate.paidHours
@@ -2476,10 +3349,7 @@ private fun PayEstimateSection(
 
 @Composable
 private fun EarningsSummaryCard(
-    grossPay: Double,
-    tax: Double,
-    deductions: Double,
-    netPay: Double,
+    estimate: PayEstimate,
     regularHours: Double,
     overtimeHours: Double,
     paidHours: Double
@@ -2490,11 +3360,11 @@ private fun EarningsSummaryCard(
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Earnings summary", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            PayBreakdownLine("Gross earnings", grossPay, MaterialTheme.colorScheme.primary)
-            PayBreakdownLine("Estimated taxes", tax, Color(0xFF54D17A))
-            PayBreakdownLine("Estimated deductions", deductions, Color(0xFFB18CFF))
+            PayBreakdownLine("Regular pay", estimate.regularPay, MaterialTheme.colorScheme.primary)
+            PayBreakdownLine("Overtime pay", estimate.overtimePay, Color(0xFFFFB020))
+            PayBreakdownLine("Shift differential", estimate.differentialPay, Color(0xFF54D17A))
             Divider()
-            PayBreakdownLine("Estimated net pay", netPay, Color(0xFF4DB6FF), emphasized = true)
+            PayBreakdownLine("Estimated gross pay", estimate.grossPay, Color(0xFF4DB6FF), emphasized = true)
             Text(
                 "Hours: ${paidHours.toSimpleString()} paid / ${regularHours.toSimpleString()} regular" +
                     if (overtimeHours > 0.0) " / ${overtimeHours.toSimpleString()} OT" else "",
@@ -2516,6 +3386,19 @@ private fun PayBreakdownLine(label: String, amount: Double, color: Color, emphas
             style = if (emphasized) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium,
             fontWeight = if (emphasized) FontWeight.SemiBold else FontWeight.Normal
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PayPeriodTypeChips(selected: PayPeriodType, onSelected: (PayPeriodType) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Pay period", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            PayPeriodType.entries.forEach { type ->
+                FilterChip(selected = selected == type, onClick = { onSelected(type) }, label = { Text(type.label) })
+            }
+        }
     }
 }
 
@@ -2548,8 +3431,10 @@ private fun CalendarSyncSection(
     message: String?,
     onLoadCalendars: () -> Unit,
     onSelectCalendar: (Long?) -> Unit,
-    onSyncCalendar: () -> Unit
+    onSyncCalendar: () -> Unit,
+    onOpenPremium: () -> Unit
 ) {
+    val unlocked = PremiumAccess.canUse(state, PremiumFeature.CalendarSync)
     val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
     var hasCalendarPermission by remember {
@@ -2578,6 +3463,10 @@ private fun CalendarSyncSection(
                 "Sync imported shifts to a calendar on this phone. Pick your Google calendar to have it show up in Google Calendar.",
                 style = MaterialTheme.typography.bodySmall
             )
+            if (!unlocked) {
+                PremiumLockedInline(PremiumFeature.CalendarSync, "Your schedule stays local. Premium unlocks calendar export and sync.", onOpenPremium)
+                return@Column
+            }
             if (!hasCalendarPermission) {
                 Button(
                     onClick = {
@@ -2644,61 +3533,585 @@ private fun android.content.Context.hasCalendarPermission(): Boolean {
 @Composable
 private fun ScheduleScreen(
     state: AppState,
+    onAddShift: (WorkShift) -> Unit,
+    onDeleteShift: (String) -> Unit,
+    onSaveShiftTemplate: (ShiftTemplate) -> Unit,
+    onDeleteShiftTemplate: (String) -> Unit,
+    onSaveShiftPattern: (ShiftPattern) -> Unit,
+    onApplyShiftPattern: (ShiftPattern, Boolean) -> Unit,
+    onSetShiftPatternEnabled: (String, Boolean) -> Unit,
+    onDeleteShiftPattern: (String) -> Unit,
     onAddDayOff: (LocalDate) -> Unit,
+    onAddTypedDayOff: (LocalDate, ShiftTemplateKind) -> Unit,
     onRemoveDayOff: (LocalDate) -> Unit,
     onClearSchedule: () -> Unit,
-    onImportSchedule: () -> Unit
+    onImportSchedule: () -> Unit,
+    onOpenPremium: () -> Unit
 ) {
-    var dayOffText by remember { mutableStateOf(LocalDate.now().toString()) }
-    var invalidDate by remember { mutableStateOf(false) }
+    var showAddShift by remember { mutableStateOf(false) }
+    var showPatternWizard by remember { mutableStateOf(false) }
+    var dayOffDate by remember { mutableStateOf(LocalDate.now()) }
+    var scheduleMessage by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
-        ScheduleHero(state = state)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(onClick = onImportSchedule, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Default.FileUpload, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Import")
-            }
-            OutlinedButton(
-                onClick = onClearSchedule,
-                enabled = state.shifts.isNotEmpty() || state.daysOff.isNotEmpty(),
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("Clear")
-            }
+        ScheduleOverviewCard(state = state)
+        ScheduleQuickActions(
+            showAddShift = showAddShift,
+            onToggleAddShift = { showAddShift = !showAddShift },
+            showPatternWizard = showPatternWizard,
+            onTogglePatternWizard = {
+                if (PremiumAccess.canUse(state, PremiumFeature.ShiftPatterns)) showPatternWizard = !showPatternWizard else scheduleMessage = "Shift patterns are a premium convenience feature."
+            },
+            dayOffDate = dayOffDate,
+            onDayOffDateChanged = { dayOffDate = it },
+            onAddDayOff = {
+                onAddDayOff(dayOffDate)
+                scheduleMessage = "Day off added."
+            },
+            onImportSchedule = onImportSchedule
+        )
+        scheduleMessage?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.SemiBold)
         }
-        WeekCalendar(state = state)
-        Text("Days off", style = MaterialTheme.typography.titleMedium)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = dayOffText,
-                onValueChange = {
-                    dayOffText = it
-                    invalidDate = false
+        if (showAddShift) {
+            AddShiftCard(
+                templates = shiftTemplatesFor(state),
+                onAddDayOff = { date, kind ->
+                    onAddTypedDayOff(date, kind)
+                    scheduleMessage = "Day off added."
+                    showAddShift = false
                 },
-                label = { Text("Add day off (YYYY-MM-DD)") },
-                isError = invalidDate,
-                modifier = Modifier.weight(1f)
+                onSave = {
+                    onAddShift(it)
+                    showAddShift = false
+                },
+                onSaveTemplate = onSaveShiftTemplate,
+                onDeleteTemplate = onDeleteShiftTemplate,
+                onCancel = { showAddShift = false }
             )
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = {
-                runCatching { LocalDate.parse(dayOffText) }
-                    .onSuccess(onAddDayOff)
-                    .onFailure { invalidDate = true }
-            }) { Text("Add day off") }
         }
-        state.daysOff.sorted().forEach { date ->
+        if (showPatternWizard) {
+            ShiftPatternWizard(
+                state = state,
+                onSavePattern = {
+                    onSaveShiftPattern(it)
+                    scheduleMessage = "Shift pattern saved."
+                    showPatternWizard = false
+                },
+                onApplyPattern = { pattern, allowDuplicates ->
+                    onApplyShiftPattern(pattern, allowDuplicates)
+                    scheduleMessage = "Shift pattern generated for the next 30 days."
+                    showPatternWizard = false
+                },
+                onCancel = { showPatternWizard = false }
+            )
+        }
+        ShiftPatternSection(
+            patterns = state.shiftPatterns,
+            onSetEnabled = onSetShiftPatternEnabled,
+            onDelete = onDeleteShiftPattern,
+            premiumUnlocked = PremiumAccess.canUse(state, PremiumFeature.ShiftPatterns),
+            onOpenPremium = onOpenPremium
+        )
+        if (!PremiumAccess.canUse(state, PremiumFeature.ShiftPatterns) && state.shiftPatterns.isEmpty()) {
+            PremiumLockedCard(PremiumFeature.ShiftPatterns, "Manual shifts and days off stay free. Premium adds rotating patterns for schedules that repeat in cycles.", onOpenPremium)
+        }
+        if (state.shifts.isEmpty() && state.daysOff.isEmpty()) {
+            ScheduleEmptyState(onImportSchedule = onImportSchedule, onAddShift = { showAddShift = true })
+        } else {
+            CurrentWeekSchedule(
+                state = state,
+                onRemoveDayOff = {
+                    onRemoveDayOff(it)
+                    scheduleMessage = "Day off removed."
+                },
+                onDeleteShift = onDeleteShift
+            )
+            NextSevenDaysSchedule(
+                state = state,
+                onRemoveDayOff = {
+                    onRemoveDayOff(it)
+                    scheduleMessage = "Day off removed."
+                },
+                onDeleteShift = onDeleteShift
+            )
+        }
+        OutlinedButton(
+            onClick = onClearSchedule,
+            enabled = state.shifts.isNotEmpty() || state.daysOff.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Clear schedule")
+        }
+    }
+}
+
+@Composable
+private fun ScheduleQuickActions(
+    showAddShift: Boolean,
+    onToggleAddShift: () -> Unit,
+    showPatternWizard: Boolean,
+    onTogglePatternWizard: () -> Unit,
+    dayOffDate: LocalDate,
+    onDayOffDateChanged: (LocalDate) -> Unit,
+    onAddDayOff: () -> Unit,
+    onImportSchedule: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onToggleAddShift, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (showAddShift) "Hide shift" else "Add shift")
+                }
+                OutlinedButton(onClick = onTogglePatternWizard, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.CalendarMonth, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (showPatternWizard) "Hide pattern" else "Shift pattern")
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onImportSchedule, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.FileUpload, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Import")
+                }
+                Spacer(Modifier.weight(1f))
+            }
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(date.format(dateFormatter), modifier = Modifier.weight(1f))
-                TextButton(onClick = { onRemoveDayOff(date) }) { Text("Remove") }
+                DateOnlyRow("Day off", dayOffDate, onChanged = onDayOffDateChanged, modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = onAddDayOff) { Text("Add day off") }
             }
         }
-        Divider()
-        Text("Default days off: ${state.defaultDaysOff.sortedBy(DayOfWeek::getValue).joinToString { it.name.lowercase().replaceFirstChar(Char::uppercase) }}")
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ScheduleOverviewCard(state: AppState) {
+    val now = LocalDateTime.now()
+    val today = now.toLocalDate()
+    val todayShifts = state.shifts.filter { it.date == today }.sortedBy { it.start }
+    val nextShift = state.shifts
+        .filter { it.endDateTime().isAfter(now) }
+        .minWithOrNull(compareBy<WorkShift> { it.date }.thenBy { it.start })
+    val currentWeekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    val currentWeekEnd = currentWeekStart.plusDays(6)
+    val weekHours = state.shifts
+        .filter { !it.date.isBefore(currentWeekStart) && !it.date.isAfter(currentWeekEnd) }
+        .sumOf { it.durationMinutes() } / 60.0
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Schedule", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            Text(
+                when {
+                    today in state.daysOff -> "Today is marked as a day off."
+                    todayShifts.isNotEmpty() -> "Today: ${todayShifts.joinToString { it.shiftTimeLabel() }}"
+                    else -> "No shift scheduled today."
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Text(
+                nextShift?.let { "Next shift ${it.timeUntilShift(now)}: ${it.date.format(dateFormatter)} at ${it.start.format(timeFormatter)}" }
+                    ?: "No upcoming shift saved.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(onClick = {}, label = { Text("${state.shifts.count { !it.date.isBefore(today) }} upcoming shifts") })
+                AssistChip(onClick = {}, label = { Text("${weekHours.toSimpleString()} hrs this week") })
+                AssistChip(onClick = {}, label = { Text("${state.daysOff.count { !it.isBefore(today) }} upcoming days off") })
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddShiftCard(
+    templates: List<ShiftTemplate>,
+    onAddDayOff: (LocalDate, ShiftTemplateKind) -> Unit,
+    onSave: (WorkShift) -> Unit,
+    onSaveTemplate: (ShiftTemplate) -> Unit,
+    onDeleteTemplate: (String) -> Unit,
+    onCancel: () -> Unit
+) {
+    var title by remember { mutableStateOf("Work") }
+    var location by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    var startsAt by remember { mutableStateOf(LocalDate.now().atTime(9, 0)) }
+    var endsAt by remember { mutableStateOf(startsAt.plusHours(8)) }
+    Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Add shift", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            ShiftTemplateChips(
+                templates = templates,
+                onApply = { template ->
+                    if (template.kind != ShiftTemplateKind.Work) {
+                        onAddDayOff(startsAt.toLocalDate(), template.kind)
+                        return@ShiftTemplateChips
+                    }
+                    title = template.label
+                    location = template.location
+                    notes = template.notes
+                    startsAt = startsAt.toLocalDate().atTime(template.start)
+                    endsAt = startsAt.toLocalDate().atTime(template.end).let { if (template.end.isBefore(template.start)) it.plusDays(1) else it }
+                },
+                onSaveTemplate = onSaveTemplate,
+                onDeleteTemplate = onDeleteTemplate
+            )
+            OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Role/title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = location, onValueChange = { location = it }, label = { Text("Location") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            DateTimeRow("Starts", startsAt, onChanged = {
+                val duration = Duration.between(startsAt, endsAt).takeIf { d -> !d.isNegative && !d.isZero } ?: Duration.ofHours(8)
+                startsAt = it
+                endsAt = it.plus(duration)
+            })
+            DateTimeRow("Ends", endsAt, onChanged = { endsAt = it })
+            OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    enabled = title.isNotBlank() && endsAt.isAfter(startsAt),
+                    onClick = {
+                        onSave(
+                            WorkShift(
+                                date = startsAt.toLocalDate(),
+                                start = startsAt.toLocalTime(),
+                                end = endsAt.toLocalTime(),
+                                label = title.trim(),
+                                location = location.trim(),
+                                notes = notes.trim()
+                            )
+                        )
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Save shift") }
+                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("Cancel") }
+            }
+        }
+    }
+}
+
+private val builtInShiftTemplates = listOf(
+    ShiftTemplate(id = "builtin-opening-shift", name = "Opening shift", label = "Opening shift", start = LocalTime.of(6, 0), end = LocalTime.of(14, 0), notes = "Opening setup and first shift tasks.", builtIn = true),
+    ShiftTemplate(id = "builtin-closing-shift", name = "Closing shift", label = "Closing shift", start = LocalTime.of(14, 0), end = LocalTime.of(22, 0), notes = "Closing cleanup and handoff.", builtIn = true),
+    ShiftTemplate(id = "builtin-mid-shift", name = "Mid shift", label = "Mid shift", start = LocalTime.of(10, 0), end = LocalTime.of(18, 0), builtIn = true),
+    ShiftTemplate(id = "builtin-truck-order", name = "Truck/order day", label = "Truck/order day", start = LocalTime.of(7, 0), end = LocalTime.of(15, 0), notes = "Truck, ordering, or delivery follow-up.", builtIn = true),
+    ShiftTemplate(id = "builtin-inventory", name = "Inventory day", label = "Inventory day", start = LocalTime.of(8, 0), end = LocalTime.of(16, 0), notes = "Inventory count and order checks.", builtIn = true),
+    ShiftTemplate(id = "builtin-day-off", name = "Day off", label = "Day off", kind = ShiftTemplateKind.DayOff, builtIn = true),
+    ShiftTemplate(id = "builtin-vacation", name = "Vacation", label = "Vacation", kind = ShiftTemplateKind.Vacation, builtIn = true),
+    ShiftTemplate(id = "builtin-sick-day", name = "Sick day", label = "Sick day", kind = ShiftTemplateKind.Sick, builtIn = true)
+)
+
+private fun shiftTemplatesFor(state: AppState): List<ShiftTemplate> = builtInShiftTemplates + state.shiftTemplates
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ShiftTemplateChips(
+    templates: List<ShiftTemplate>,
+    onApply: (ShiftTemplate) -> Unit,
+    onSaveTemplate: (ShiftTemplate) -> Unit,
+    onDeleteTemplate: (String) -> Unit
+) {
+    var editorOpen by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<ShiftTemplate?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("Shift templates", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            TextButton(onClick = {
+                editing = null
+                editorOpen = !editorOpen
+            }) { Text(if (editorOpen) "Hide" else "Create") }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            templates.forEach { template ->
+                OutlinedButton(onClick = { onApply(template) }) { Text(template.name) }
+            }
+        }
+        templates.filterNot { it.builtIn }.forEach { template ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(template.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = {
+                    editing = template
+                    editorOpen = true
+                }) { Text("Edit") }
+                TextButton(onClick = { onDeleteTemplate(template.id) }) { Text("Delete") }
+            }
+        }
+        if (editorOpen) {
+            ShiftTemplateEditor(
+                template = editing,
+                onSave = {
+                    onSaveTemplate(it)
+                    editorOpen = false
+                    editing = null
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShiftTemplateEditor(template: ShiftTemplate?, onSave: (ShiftTemplate) -> Unit) {
+    var name by remember(template?.id) { mutableStateOf(template?.name.orEmpty()) }
+    var label by remember(template?.id) { mutableStateOf(template?.label ?: "Work") }
+    var location by remember(template?.id) { mutableStateOf(template?.location.orEmpty()) }
+    var notes by remember(template?.id) { mutableStateOf(template?.notes.orEmpty()) }
+    var marksDayOff by remember(template?.id) { mutableStateOf(template?.kind != null && template.kind != ShiftTemplateKind.Work) }
+    var startsAt by remember(template?.id) { mutableStateOf(LocalDate.now().atTime(template?.start ?: LocalTime.of(9, 0))) }
+    var endsAt by remember(template?.id) { mutableStateOf(LocalDate.now().atTime(template?.end ?: LocalTime.of(17, 0))) }
+    Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(template?.let { "Edit shift template" } ?: "Create shift template", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Template name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = label, onValueChange = { label = it }, label = { Text("Role/title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = location, onValueChange = { location = it }, label = { Text("Location") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = marksDayOff, onCheckedChange = { marksDayOff = it })
+                Text("Marks a day off")
+            }
+            if (!marksDayOff) {
+                DateTimeRow("Starts", startsAt, onChanged = { startsAt = it })
+                DateTimeRow("Ends", endsAt, onChanged = { endsAt = it })
+            }
+            OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+            Button(
+                enabled = name.isNotBlank() && label.isNotBlank(),
+                onClick = {
+                    onSave(
+                        ShiftTemplate(
+                            id = template?.id ?: java.util.UUID.randomUUID().toString(),
+                            name = name.trim(),
+                            label = label.trim(),
+                            start = startsAt.toLocalTime(),
+                            end = endsAt.toLocalTime(),
+                            location = location.trim(),
+                            notes = notes.trim(),
+                            kind = if (marksDayOff) ShiftTemplateKind.DayOff else ShiftTemplateKind.Work
+                        )
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Save template") }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ShiftPatternSection(
+    patterns: List<ShiftPattern>,
+    onSetEnabled: (String, Boolean) -> Unit,
+    onDelete: (String) -> Unit,
+    premiumUnlocked: Boolean,
+    onOpenPremium: () -> Unit
+) {
+    if (patterns.isEmpty()) return
+    Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Shift patterns", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            if (!premiumUnlocked) {
+                PremiumLockedInline(PremiumFeature.ShiftPatterns, "Existing generated shifts remain visible. Premium is needed to create or resume patterns.", onOpenPremium)
+            }
+            patterns.sortedBy { it.startDate }.forEach { pattern ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text(pattern.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "${pattern.cycleLength}-day cycle from ${pattern.startDate.format(dateFormatter)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(checked = pattern.enabled, onCheckedChange = { if (premiumUnlocked) onSetEnabled(pattern.id, it) })
+                    TextButton(onClick = { onDelete(pattern.id) }) { Text("Delete") }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ShiftPatternWizard(
+    state: AppState,
+    onSavePattern: (ShiftPattern) -> Unit,
+    onApplyPattern: (ShiftPattern, Boolean) -> Unit,
+    onCancel: () -> Unit
+) {
+    val presetNames = listOf("Standard weekdays", "4 on / 4 off", "5 on / 2 off", "5 day / 5 off / 5 night", "Weekends only", "Custom")
+    var pattern by remember { mutableStateOf(ShiftPatternGenerator.preset("5 on / 2 off", LocalDate.now())) }
+    var name by remember { mutableStateOf(pattern.name) }
+    var cycleLengthText by remember { mutableStateOf(pattern.cycleLength.toString()) }
+    var hasEndDate by remember { mutableStateOf(false) }
+    var allowDuplicates by remember { mutableStateOf(false) }
+    val normalizedPattern = pattern.copy(
+        name = name.ifBlank { "Shift pattern" },
+        cycleLength = cycleLengthText.toIntOrNull()?.coerceIn(1, 30) ?: pattern.cycleLength,
+        days = normalizedPatternDays(pattern.days, cycleLengthText.toIntOrNull()?.coerceIn(1, 30) ?: pattern.cycleLength),
+        endDate = if (hasEndDate) pattern.endDate ?: pattern.startDate.plusMonths(1) else null
+    )
+    val preview = ShiftPatternGenerator.preview(normalizedPattern)
+    val duplicateCount = preview.shifts.count { previewShift ->
+        state.shifts.any { existing -> existing.date == previewShift.date && existing.start == previewShift.start && existing.end == previewShift.end }
+    }
+
+    Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Shift Pattern", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("Step 1: choose a preset, then adjust the cycle before saving.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                presetNames.forEach { preset ->
+                    OutlinedButton(onClick = {
+                        val next = ShiftPatternGenerator.preset(preset, pattern.startDate)
+                        pattern = next
+                        name = next.name
+                        cycleLengthText = next.cycleLength.toString()
+                    }) { Text(preset) }
+                }
+            }
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Pattern name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            DateOnlyRow("Start date", normalizedPattern.startDate, onChanged = { pattern = pattern.copy(startDate = it) })
+            OutlinedTextField(
+                value = cycleLengthText,
+                onValueChange = { value -> cycleLengthText = value.filter(Char::isDigit).take(2) },
+                label = { Text("Cycle length") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = hasEndDate, onCheckedChange = { hasEndDate = it })
+                Text("Use end date")
+            }
+            if (hasEndDate) {
+                DateOnlyRow("End date", normalizedPattern.endDate ?: normalizedPattern.startDate.plusMonths(1), onChanged = { pattern = pattern.copy(endDate = it) })
+            }
+            Text("Step 2: set each cycle day.", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            normalizedPattern.days.forEach { day ->
+                ShiftPatternDayEditor(day = day, onChange = { changed ->
+                    pattern = pattern.copy(days = normalizedPattern.days.map { if (it.index == changed.index) changed else it })
+                })
+            }
+            Text("Step 3: preview the next 30 days.", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text("${preview.shifts.size} shifts and ${preview.daysOff.size} days off will be generated.", style = MaterialTheme.typography.bodyMedium)
+            if (duplicateCount > 0) {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f))) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("$duplicateCount generated shifts match existing shifts.", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = allowDuplicates, onCheckedChange = { allowDuplicates = it })
+                            Text("Allow duplicate shifts on the same date and time")
+                        }
+                    }
+                }
+            }
+            ShiftPatternPreviewList(preview = preview)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { onSavePattern(normalizedPattern) }, modifier = Modifier.weight(1f)) { Text("Save pattern") }
+                Button(
+                    onClick = { onApplyPattern(normalizedPattern, allowDuplicates) },
+                    enabled = preview.shifts.isNotEmpty() && (duplicateCount == 0 || allowDuplicates),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Save shifts") }
+            }
+            TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+        }
+    }
+}
+
+@Composable
+private fun ShiftPatternDayEditor(day: ShiftPatternDay, onChange: (ShiftPatternDay) -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Day ${day.index + 1}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = day.kind == ShiftPatternDayKind.Work, onCheckedChange = { checked ->
+                        onChange(day.copy(kind = if (checked) ShiftPatternDayKind.Work else ShiftPatternDayKind.Off))
+                    })
+                    Text("Work")
+                }
+            }
+            if (day.kind == ShiftPatternDayKind.Work) {
+                OutlinedTextField(value = day.label, onValueChange = { onChange(day.copy(label = it)) }, label = { Text("Shift type") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = day.start.toString(),
+                        onValueChange = { value -> parseReviewTime(value)?.let { onChange(day.copy(start = it)) } },
+                        label = { Text("Start") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = day.end.toString(),
+                        onValueChange = { value -> parseReviewTime(value)?.let { onChange(day.copy(end = it)) } },
+                        label = { Text("End") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                OutlinedTextField(value = day.location, onValueChange = { onChange(day.copy(location = it)) }, label = { Text("Location") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            } else {
+                Text("Off day in this cycle", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShiftPatternPreviewList(preview: com.example.workdayplanner.data.ShiftPatternPreview) {
+    val datedItems = (preview.shifts.map { it.date } + preview.daysOff).distinct().sorted().take(30)
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            datedItems.take(10).forEach { date ->
+                val shift = preview.shifts.firstOrNull { it.date == date }
+                Text(
+                    shift?.let { "${date.format(shortDateFormatter)} ${it.label}: ${it.start.format(timeFormatter)} - ${it.end.format(timeFormatter)}" }
+                        ?: "${date.format(shortDateFormatter)} Day off",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            if (datedItems.size > 10) {
+                Text("+${datedItems.size - 10} more days in preview", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+private fun normalizedPatternDays(days: List<ShiftPatternDay>, cycleLength: Int): List<ShiftPatternDay> {
+    val byIndex = days.associateBy { it.index }
+    return (0 until cycleLength.coerceIn(1, 30)).map { index ->
+        byIndex[index] ?: ShiftPatternDay(index = index)
+    }
+}
+
+@Composable
+private fun ScheduleEmptyState(onImportSchedule: () -> Unit, onAddShift: () -> Unit) {
+    Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("No schedule yet", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Import a screenshot or add a shift manually to build your work week.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onImportSchedule, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.FileUpload, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Import")
+                }
+                OutlinedButton(onClick = onAddShift, modifier = Modifier.weight(1f)) { Text("Add shift") }
+            }
+        }
     }
 }
 
@@ -2713,7 +4126,9 @@ private fun SettingsScreen(
     calendarMessage: String?,
     onLoadCalendars: () -> Unit,
     onSelectCalendar: (Long?) -> Unit,
-    onSyncCalendar: () -> Unit
+    onSyncCalendar: () -> Unit,
+    onMockPremiumChanged: (Boolean) -> Unit,
+    onOpenPremium: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
@@ -2723,11 +4138,13 @@ private fun SettingsScreen(
             state = state,
             onDarkModeChanged = onDarkModeChanged,
             onAccentStyleChanged = onAccentStyleChanged,
-            onWidgetLayoutModeChanged = onWidgetLayoutModeChanged
+            onWidgetLayoutModeChanged = onWidgetLayoutModeChanged,
+            onOpenPremium = onOpenPremium
         )
         PayEstimateSection(
             state = state,
-            onPaySettingsChanged = onPaySettingsChanged
+            onPaySettingsChanged = onPaySettingsChanged,
+            onOpenPremium = onOpenPremium
         )
         CalendarSyncSection(
             state = state,
@@ -2735,78 +4152,90 @@ private fun SettingsScreen(
             message = calendarMessage,
             onLoadCalendars = onLoadCalendars,
             onSelectCalendar = onSelectCalendar,
-            onSyncCalendar = onSyncCalendar
+            onSyncCalendar = onSyncCalendar,
+            onOpenPremium = onOpenPremium
         )
+        PremiumSettingsSection(state = state, onMockPremiumChanged = onMockPremiumChanged, onOpenPremium = onOpenPremium)
     }
 }
 
 @Composable
-private fun WeekCalendar(state: AppState) {
-    val visibleDates = state.shifts.map { it.date } + state.daysOff
-    val weekStarts = visibleDates
-        .map { it.with(TemporalAdjusters.previousOrSame(DayOfWeek.SATURDAY)) }
-        .distinct()
-        .sorted()
-        .ifEmpty { listOf(LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.SATURDAY))) }
-
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Work weeks", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        weekStarts.forEach { weekStart ->
-            ScheduleWeekCard(weekStart = weekStart, state = state)
+private fun PremiumSettingsSection(
+    state: AppState,
+    onMockPremiumChanged: (Boolean) -> Unit,
+    onOpenPremium: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionHeader("Premium", "Free stays useful. Premium adds convenience for power users.")
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text(if (state.premium.has(PremiumFeature.UnlimitedImports)) "Premium active" else "Free plan", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Text("Local mock entitlement for testing. Real billing can be wired later.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = state.premium.mockPremiumEnabled, onCheckedChange = onMockPremiumChanged)
+            }
+            OutlinedButton(onClick = onOpenPremium, modifier = Modifier.fillMaxWidth()) {
+                Text("View premium options")
+            }
         }
     }
 }
 
 @Composable
-private fun ScheduleWeekCard(weekStart: LocalDate, state: AppState) {
-    val days = (0L..6L).map { weekStart.plusDays(it) }
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth()
+private fun PremiumScreen(
+    state: AppState,
+    onMockPremiumChanged: (Boolean) -> Unit,
+    onBack: () -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(screenPadding),
+        verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                "${weekStart.format(dateFormatter)} - ${days.last().format(dateFormatter)}",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
-            )
-            Divider()
-            days.forEach { date ->
-                val shifts = state.shifts.filter { it.date == date }.sortedBy { it.start }
-                val isOff = date in state.daysOff
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.width(92.dp)) {
-                        Text(
-                            date.dayOfWeek.name.take(3).lowercase().replaceFirstChar(Char::uppercase),
-                            style = MaterialTheme.typography.labelLarge
-                        )
-                        Text(
-                            "${date.monthValue}/${date.dayOfMonth}",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Workday Planner Premium", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text("The free app covers basic shifts, tasks, reminders, days off, a few imports, and the Today dashboard.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text("Premium unlocks convenience and power-user tools without hiding existing data.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            }
+        }
+        item {
+            Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Suggested pricing", "No payments are implemented yet.")
+                    PricingRow("Monthly", "$3.99", "For trying the power tools.")
+                    PricingRow("Yearly", "$29.99", "Best fit for steady shift workers.")
+                    PricingRow("Lifetime", "$59.99", "One-time unlock option.")
+                }
+            }
+        }
+        item {
+            Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionHeader("Premium includes")
+                    PremiumFeature.entries.forEach { feature ->
+                        Text("${feature.title}: ${feature.value}", style = MaterialTheme.typography.bodyMedium)
                     }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        when {
-                            isOff -> Text(
-                                "Not scheduled",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.secondary
-                            )
-                            shifts.isEmpty() -> Text("No shift", style = MaterialTheme.typography.bodyLarge)
-                            else -> shifts.forEach { shift ->
-                                Text(
-                                    "${shift.start.format(timeFormatter)} - ${shift.end.format(timeFormatter)}",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
+                }
+            }
+        }
+        item {
+            Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Mock premium", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text("Local testing switch. Replace this with Play Billing entitlement later.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        Switch(checked = state.premium.mockPremiumEnabled, onCheckedChange = onMockPremiumChanged)
                     }
+                    Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back to settings") }
                 }
             }
         }
@@ -2814,36 +4243,259 @@ private fun ScheduleWeekCard(weekStart: LocalDate, state: AppState) {
 }
 
 @Composable
+private fun PricingRow(name: String, price: String, detail: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.weight(1f)) {
+            Text(name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(price, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun PremiumLockedCard(feature: PremiumFeature, body: String, onOpenPremium: () -> Unit) {
+    Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(feature.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedButton(onClick = onOpenPremium, modifier = Modifier.fillMaxWidth()) { Text("See premium options") }
+        }
+    }
+}
+
+@Composable
+private fun PremiumLockedInline(feature: PremiumFeature, body: String, onOpenPremium: () -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(feature.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = onOpenPremium) { Text("Premium options") }
+        }
+    }
+}
+
+@Composable
+private fun CurrentWeekSchedule(state: AppState, onRemoveDayOff: (LocalDate) -> Unit, onDeleteShift: (String) -> Unit) {
+    val today = LocalDate.now()
+    val weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    val days = (0L..6L).map { weekStart.plusDays(it) }
+    ScheduleDaySection(
+        title = "Current week",
+        subtitle = "${weekStart.format(dateFormatter)} - ${days.last().format(dateFormatter)}",
+        dates = days,
+        state = state,
+        onRemoveDayOff = onRemoveDayOff,
+        onDeleteShift = onDeleteShift
+    )
+}
+
+@Composable
+private fun NextSevenDaysSchedule(state: AppState, onRemoveDayOff: (LocalDate) -> Unit, onDeleteShift: (String) -> Unit) {
+    val today = LocalDate.now()
+    ScheduleDaySection(
+        title = "Next 7 days",
+        subtitle = "Starting ${today.format(dateFormatter)}",
+        dates = (0L..6L).map { today.plusDays(it) },
+        state = state,
+        onRemoveDayOff = onRemoveDayOff,
+        onDeleteShift = onDeleteShift
+    )
+}
+
+@Composable
+private fun ScheduleDaySection(
+    title: String,
+    subtitle: String,
+    dates: List<LocalDate>,
+    state: AppState,
+    onRemoveDayOff: (LocalDate) -> Unit,
+    onDeleteShift: (String) -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            dates.forEach { date ->
+                ScheduleDayCard(
+                    date = date,
+                    shifts = state.shifts.filter { it.date == date }.sortedBy { it.start },
+                    isDayOff = date in state.daysOff,
+                    linkedTaskCount = { shift -> state.tasks.count { it.linkedShiftId == shift.id } },
+                    onRemoveDayOff = onRemoveDayOff,
+                    onDeleteShift = onDeleteShift
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScheduleDayCard(
+    date: LocalDate,
+    shifts: List<WorkShift>,
+    isDayOff: Boolean,
+    linkedTaskCount: (WorkShift) -> Int,
+    onRemoveDayOff: (LocalDate) -> Unit,
+    onDeleteShift: (String) -> Unit
+) {
+    val isToday = date == LocalDate.now()
+    val container = when {
+        isToday -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = container),
+        border = BorderStroke(1.dp, if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "${date.dayOfWeek.name.take(3).lowercase().replaceFirstChar(Char::uppercase)} ${date.format(shortDateFormatter)}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (isToday) Text("Today", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                }
+                if (isDayOff) {
+                    TextButton(onClick = { onRemoveDayOff(date) }) { Text("Remove") }
+                }
+            }
+            when {
+                isDayOff -> DayOffCard()
+                shifts.isEmpty() -> Text("No shift saved", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                else -> shifts.forEach { shift ->
+                    ShiftSummaryCard(shift = shift, linkedTaskCount = linkedTaskCount(shift), onDelete = { onDeleteShift(shift.id) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DayOffCard() {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text("Day off", modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun ShiftSummaryCard(shift: WorkShift, linkedTaskCount: Int, onDelete: (() -> Unit)? = null) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text(shift.label.ifBlank { "Work" }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(shift.date.format(dateFormatter), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${shift.start.format(timeFormatter)} - ${shift.end.format(timeFormatter)}", style = MaterialTheme.typography.bodyLarge)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(shift.durationLabel(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    if (onDelete != null) {
+                        TextButton(onClick = onDelete) { Text("Delete") }
+                    }
+                }
+            }
+            val detail = listOf(shift.location, shift.notes).filter { it.isNotBlank() }.joinToString(" - ")
+            if (detail.isNotBlank()) {
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(
+                "$linkedTaskCount linked ${if (linkedTaskCount == 1) "task" else "tasks"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (shift.patternId != null) {
+                Text("Generated from shift pattern", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+@Composable
 private fun ImportScreen(
+    state: AppState,
     rawText: String,
     parsed: ParsedSchedule?,
     changes: ScheduleChangeSet?,
     isReading: Boolean,
     message: String?,
     error: String?,
+    guidance: ScheduleImportGuidance?,
     onTextChange: (String) -> Unit,
     onImagePicked: (android.net.Uri) -> Unit,
+    onImageCancelled: () -> Unit,
     onPreview: () -> Unit,
-    onApply: () -> Unit
+    onApply: (ParsedSchedule) -> Unit,
+    onStartOver: () -> Unit,
+    onOpenPremium: () -> Unit
 ) {
+    val context = LocalContext.current
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) onImagePicked(uri)
+        if (uri != null) onImagePicked(uri) else onImageCancelled()
     }
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
+        val uri = cameraUri
+        if (saved && uri != null) onImagePicked(uri) else onImageCancelled()
+    }
+    var reviewRows by remember(parsed) { mutableStateOf(parsed?.toReviewRows().orEmpty()) }
+    val remainingImports = PremiumAccess.remainingScreenshotImports(state)
+    val canImport = PremiumAccess.canImportScreenshot(state)
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
-        ImportStepHeader("1", "Pick a schedule screenshot", "Crop to the schedule list when possible for the cleanest import.")
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = { imagePicker.launch("image/*") }, enabled = !isReading) {
+        ImportStepHeader("1", "Pick a schedule screenshot", "Take a photo or choose an image. Your schedule image stays on your phone.")
+        if (!PremiumAccess.canUse(state, PremiumFeature.UnlimitedImports)) {
+            Text(
+                "$remainingImports free screenshot ${if (remainingImports == 1) "import" else "imports"} left this month.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (!canImport) {
+                PremiumLockedInline(PremiumFeature.UnlimitedImports, "Manual shifts stay free. Premium unlocks unlimited screenshot imports.", onOpenPremium)
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { imagePicker.launch("image/*") }, enabled = !isReading && canImport) {
                 Icon(Icons.Default.FileUpload, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text(if (isReading) "Reading screenshot..." else "Choose screenshot")
             }
+            OutlinedButton(
+                onClick = {
+                    val photoFile = File.createTempFile("schedule-import-", ".jpg", context.cacheDir)
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
+                    cameraUri = uri
+                    cameraLauncher.launch(uri)
+                },
+                enabled = !isReading && canImport
+            ) {
+                Text("Take photo")
+            }
             OutlinedButton(onClick = onPreview, enabled = rawText.isNotBlank()) { Text("Build preview") }
         }
-        ImportStepHeader("2", "Review recognized text", "You can edit the OCR text before building the preview.")
+        ImportStepHeader("2", "Run on-device OCR", "Workday Planner reads the screenshot locally and does not upload images.")
+        ImportStepHeader("3", "Review recognized text", "You can edit the OCR text before building the preview.")
         OutlinedTextField(
             value = rawText,
             onValueChange = onTextChange,
@@ -2852,6 +4504,7 @@ private fun ImportScreen(
             modifier = Modifier.fillMaxWidth()
         )
         if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
+        guidance?.let { ScheduleImportGuidanceCard(it) }
         if (message != null) Text(message, color = MaterialTheme.colorScheme.secondary)
         parsed?.let {
             if (rawText.isNotBlank() && it.shifts.isEmpty() && it.daysOff.isEmpty()) {
@@ -2863,13 +4516,47 @@ private fun ImportScreen(
             }
             Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ImportStepHeader("3", "Preview shifts", "Confirm the app found the right shifts and days off.")
-                    Text("${it.shifts.size} shifts, ${it.daysOff.size} days off")
-                    changes?.let { changeSet -> ScheduleChangeSummary(changeSet) }
-                    ParsedScheduleRows(it)
-                    if (it.unparsedLines.isNotEmpty()) Text("${it.unparsedLines.size} lines need review")
-                    ManualCorrectionRows(it.unparsedLines)
-                    Button(onClick = onApply, modifier = Modifier.fillMaxWidth()) { Text("Apply schedule import") }
+                    ImportStepHeader("4", "Review detected shifts", "High confidence rows are pre-selected. Needs review rows must be confirmed before saving.")
+                    val corrected = reviewRows.toParsedSchedule()
+                    Text("${corrected.shifts.size} shifts, ${corrected.daysOff.size} days off confirmed")
+                    changes?.let { changeSet -> ScheduleChangeSummary(changeSet, "Original OCR changes") }
+                    ScheduleReviewRows(
+                        rows = reviewRows,
+                        onRowsChanged = { reviewRows = it },
+                        onAddShift = {
+                            val date = reviewRows.firstOrNull { row -> row.kind != ScheduleReviewKind.Ignored }?.date ?: LocalDate.now()
+                            reviewRows = reviewRows + ScheduleReviewRow(
+                                date = date,
+                                start = LocalTime.of(9, 0),
+                                end = LocalTime.of(17, 0),
+                                title = "Work",
+                                confidence = ScheduleImportConfidence.NeedsReview,
+                                selected = true
+                            )
+                        }
+                    )
+                    if (reviewRows.isEmpty()) {
+                        Text(
+                            "No clear shifts were found. You can still use the recognized text above to add shifts manually.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        "Review before saving. Nothing is saved until you confirm this review.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(
+                        onClick = { onApply(corrected) },
+                        enabled = corrected.shifts.isNotEmpty() || corrected.daysOff.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Save all confirmed shifts")
+                    }
+                    TextButton(onClick = onStartOver, modifier = Modifier.fillMaxWidth()) {
+                        Text("Start over")
+                    }
                 }
             }
         }
@@ -2886,7 +4573,241 @@ private fun ImportStepHeader(step: String, title: String, body: String) {
 }
 
 @Composable
-private fun ScheduleChangeSummary(changes: ScheduleChangeSet) {
+private fun ScheduleImportGuidanceCard(guidance: ScheduleImportGuidance) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(guidance.issue.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(guidance.issue.body, style = MaterialTheme.typography.bodyMedium)
+            guidance.detail?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            guidance.issue.tips.forEach { tip ->
+                Text(tip, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+private enum class ScheduleReviewKind { Shift, DayOff, Ignored }
+
+private enum class ScheduleImportConfidence(val label: String) {
+    High("High confidence"),
+    NeedsReview("Needs review"),
+    Unclear("Could not read clearly")
+}
+
+private data class ScheduleReviewRow(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val kind: ScheduleReviewKind = ScheduleReviewKind.Shift,
+    val date: LocalDate,
+    val start: LocalTime = LocalTime.of(9, 0),
+    val end: LocalTime = LocalTime.of(17, 0),
+    val title: String = "Work",
+    val location: String = "",
+    val notes: String = "",
+    val sourceText: String = "",
+    val confidence: ScheduleImportConfidence = ScheduleImportConfidence.High,
+    val selected: Boolean = true
+)
+
+private fun ParsedSchedule.toReviewRows(): List<ScheduleReviewRow> {
+    val shiftRows = shifts.map { shift ->
+        ScheduleReviewRow(
+            kind = ScheduleReviewKind.Shift,
+            date = shift.date,
+            start = shift.start,
+            end = shift.end,
+            title = shift.label,
+            location = shift.location,
+            notes = shift.notes,
+            confidence = if (shift.label.isBlank() || shift.label == "Work") ScheduleImportConfidence.NeedsReview else ScheduleImportConfidence.High,
+            selected = shift.label.isNotBlank() && shift.label != "Work"
+        )
+    }
+    val dayOffRows = daysOff.map { date ->
+        ScheduleReviewRow(kind = ScheduleReviewKind.DayOff, date = date, title = "Day off", confidence = ScheduleImportConfidence.High)
+    }
+    val unclearRows = unparsedLines.map { line ->
+        ScheduleReviewRow(
+            kind = ScheduleReviewKind.Ignored,
+            date = LocalDate.now(),
+            title = "Unclear OCR",
+            sourceText = line,
+            confidence = ScheduleImportConfidence.Unclear,
+            selected = false
+        )
+    }
+    return (shiftRows + dayOffRows + unclearRows).sortedWith(compareBy<ScheduleReviewRow> { it.date }.thenBy { it.start })
+}
+
+private fun List<ScheduleReviewRow>.toParsedSchedule(): ParsedSchedule {
+    val activeRows = filter { it.selected && it.kind != ScheduleReviewKind.Ignored }
+    return ParsedSchedule(
+        shifts = activeRows
+            .filter { it.kind == ScheduleReviewKind.Shift }
+            .map {
+                WorkShift(
+                    date = it.date,
+                    start = it.start,
+                    end = it.end,
+                    label = it.title.ifBlank { "Work" },
+                    location = it.location,
+                    notes = it.notes
+                )
+            },
+        daysOff = activeRows.filter { it.kind == ScheduleReviewKind.DayOff }.map { it.date }.toSet(),
+        unparsedLines = filter { it.kind == ScheduleReviewKind.Ignored && it.sourceText.isNotBlank() }.map { it.sourceText }
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ScheduleReviewRows(
+    rows: List<ScheduleReviewRow>,
+    onRowsChanged: (List<ScheduleReviewRow>) -> Unit,
+    onAddShift: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Review rows", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = onAddShift) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("Add shift")
+            }
+        }
+        rows.groupBy { if (it.kind == ScheduleReviewKind.Ignored) null else it.date }.toSortedMap(compareBy<LocalDate?> { it ?: LocalDate.MAX }).forEach { (date, dateRows) ->
+            Text(date?.format(dateFormatter) ?: "Unclear OCR lines", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            dateRows.forEach { row ->
+                ScheduleReviewRowCard(
+                    row = row,
+                    onChange = { changed -> onRowsChanged(rows.map { if (it.id == row.id) changed else it }) },
+                    onDelete = { onRowsChanged(rows.filterNot { it.id == row.id }) }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ScheduleReviewRowCard(row: ScheduleReviewRow, onChange: (ScheduleReviewRow) -> Unit, onDelete: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ConfidenceChip(row.confidence)
+                if (row.kind == ScheduleReviewKind.DayOff) AssistChip(onClick = {}, label = { Text("Day off") })
+                if (row.kind == ScheduleReviewKind.Ignored) AssistChip(onClick = {}, label = { Text("Ignored") })
+            }
+            if (row.kind != ScheduleReviewKind.Ignored) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Checkbox(
+                        checked = row.selected,
+                        onCheckedChange = { checked -> onChange(row.copy(selected = checked, confidence = if (checked) ScheduleImportConfidence.NeedsReview else row.confidence)) }
+                    )
+                    Text("Confirmed for import", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            if (row.sourceText.isNotBlank()) {
+                Text(row.sourceText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (row.kind != ScheduleReviewKind.Ignored) {
+                OutlinedTextField(
+                    value = row.date.toString(),
+                    onValueChange = { value -> parseReviewDate(value)?.let { onChange(row.copy(date = it, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) } },
+                    label = { Text("Date") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            if (row.kind == ScheduleReviewKind.Shift) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = row.start.toString(),
+                        onValueChange = { value -> parseReviewTime(value)?.let { onChange(row.copy(start = it, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) } },
+                        label = { Text("Start") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = row.end.toString(),
+                        onValueChange = { value -> parseReviewTime(value)?.let { onChange(row.copy(end = it, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) } },
+                        label = { Text("End") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                OutlinedTextField(
+                    value = row.title,
+                    onValueChange = { onChange(row.copy(title = it, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) },
+                    label = { Text("Title") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = row.location,
+                    onValueChange = { onChange(row.copy(location = it, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) },
+                    label = { Text("Location") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = row.notes,
+                    onValueChange = { onChange(row.copy(notes = it, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) },
+                    label = { Text("Notes") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                if (row.kind != ScheduleReviewKind.Shift) {
+                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.Shift, title = if (row.title == "Day off") "Work" else row.title, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }, modifier = Modifier.weight(1f)) {
+                        Text("Shift")
+                    }
+                }
+                if (row.kind != ScheduleReviewKind.DayOff) {
+                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.DayOff, title = "Day off", selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }, modifier = Modifier.weight(1f)) {
+                        Text("Day off")
+                    }
+                }
+                TextButton(onClick = onDelete, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Delete, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Delete")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfidenceChip(confidence: ScheduleImportConfidence) {
+    val color = when (confidence) {
+        ScheduleImportConfidence.High -> Color(0xFF54D17A)
+        ScheduleImportConfidence.NeedsReview -> Color(0xFFFFB020)
+        ScheduleImportConfidence.Unclear -> Color(0xFFFF5A66)
+    }
+    AssistChip(
+        onClick = {},
+        label = { Text(confidence.label) },
+        colors = AssistChipDefaults.assistChipColors(containerColor = color.copy(alpha = 0.16f), labelColor = color)
+    )
+}
+
+private fun parseReviewDate(value: String): LocalDate? = runCatching { LocalDate.parse(value.trim()) }.getOrNull()
+
+private fun parseReviewTime(value: String): LocalTime? = runCatching { LocalTime.parse(value.trim()) }.getOrNull()
+
+@Composable
+private fun ScheduleChangeSummary(changes: ScheduleChangeSet, title: String = "Schedule changes") {
     Card(
         colors = CardDefaults.cardColors(
             containerColor = if (changes.hasChanges) {
@@ -2898,7 +4819,7 @@ private fun ScheduleChangeSummary(changes: ScheduleChangeSet) {
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Schedule changes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             if (!changes.hasChanges) {
                 Text("No changes found against your saved schedule.", style = MaterialTheme.typography.bodyMedium)
                 return@Column
@@ -3027,6 +4948,10 @@ private fun RepeatRule.displayName(): String = when (this) {
     RepeatRule.Weekdays -> "Weekdays"
     RepeatRule.Weekly -> "Weekly"
     RepeatRule.CustomDays -> "Custom days"
+    RepeatRule.EveryWorkday -> "Every workday"
+    RepeatRule.OpeningShifts -> "Opening shifts"
+    RepeatRule.ClosingShifts -> "Closing shifts"
+    RepeatRule.TruckDays -> "Truck days"
 }
 
 private fun TaskItem.repeatLabel(): String {

@@ -11,12 +11,16 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.example.workdayplanner.MainActivity
 import com.example.workdayplanner.R
-import org.json.JSONObject
+import com.example.workdayplanner.data.PlannerRepository
+import com.example.workdayplanner.data.RepeatRule
+import com.example.workdayplanner.data.TaskRecurrence
 
 class TaskAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val taskId = intent.getStringExtra(EXTRA_TASK_ID).orEmpty()
-        if (taskId.isNotBlank() && isTaskCompleted(context, taskId)) return
+        val repository = PlannerRepository(context)
+        val task = repository.state.value.tasks.firstOrNull { it.id == taskId } ?: return
+        if (task.completed) return
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -44,19 +48,18 @@ class TaskAlarmReceiver : BroadcastReceiver() {
             .build()
 
         NotificationManagerCompat.from(context).notify(taskId.hashCode(), notification)
-    }
 
-    private fun isTaskCompleted(context: Context, taskId: String): Boolean {
-        val root = context.getSharedPreferences("planner", Context.MODE_PRIVATE)
-            .getString("state", null)
-            ?.let(::JSONObject)
-            ?: return false
-        val tasks = root.optJSONArray("tasks") ?: return false
-        for (index in 0 until tasks.length()) {
-            val task = tasks.optJSONObject(index) ?: continue
-            if (task.optString("id") == taskId) return task.optBoolean("completed", false)
+        if (task.repeatRule != RepeatRule.None) {
+            TaskRecurrence.nextOccurrence(task, repository.state.value)?.let { next ->
+                val alreadyExists = repository.state.value.tasks.any {
+                    it.id != task.id && it.title == next.title && it.deadline == next.deadline
+                }
+                if (!alreadyExists) {
+                    repository.upsertTask(next)
+                    AlarmScheduler(context).schedule(next)
+                }
+            }
         }
-        return false
     }
 
     companion object {

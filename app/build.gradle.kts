@@ -1,6 +1,15 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use(::load)
+    }
 }
 
 android {
@@ -11,18 +20,21 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 50
-        versionName = "2.30-manager-dashboard"
+        versionCode = 51
+        versionName = "2.31-command-center-stability"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
         create("localRelease") {
-            storeFile = rootProject.file("release-keystore.jks")
-            storePassword = "workdayplanner"
-            keyAlias = "workdayplanner"
-            keyPassword = "workdayplanner"
+            if (!keystorePropertiesFile.exists()) {
+                throw GradleException("Release signing requires local keystore.properties. Copy keystore.properties.example and fill it with local-only values.")
+            }
+            storeFile = file(keystoreProperties.getProperty("storeFile") ?: throw GradleException("Missing storeFile in keystore.properties"))
+            storePassword = keystoreProperties.getProperty("storePassword") ?: throw GradleException("Missing storePassword in keystore.properties")
+            keyAlias = keystoreProperties.getProperty("keyAlias") ?: throw GradleException("Missing keyAlias in keystore.properties")
+            keyPassword = keystoreProperties.getProperty("keyPassword") ?: throw GradleException("Missing keyPassword in keystore.properties")
         }
     }
 

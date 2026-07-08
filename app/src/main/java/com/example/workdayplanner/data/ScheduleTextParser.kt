@@ -19,16 +19,17 @@ data class ParsedSchedule(
 object ScheduleTextParser {
     private val dateRegex = Regex("""\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b""")
     private val fullDateRegex = Regex("""\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b""")
-    private val dayHeaderRegex = Regex("""(?i)^\s*(sat|sun|mon|tue|wed|thu|fri)\b(?:\s+(\d{1,2})(?!\s*(?:a\.?m\.?|p\.?m\.?)))?(.*)$""")
+    private val dayHeaderRegex = Regex("""(?i)^\s*(saturday|sat|sunday|sun|monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri)\b(?:\s+(\d{1,2})(?!\s*(?::|-|a\.?m\.?|p\.?m\.?|[ap]\b)))?(.*)$""")
     private val dayNumberRegex = Regex("""^\d{1,2}$""")
     private val leadingDayNumberRegex = Regex("""^(\d{1,2})\s+.+$""")
     private val hoursRegex = Regex("""(?i)^\d+(?:\.\d+)?\s+hours$""")
     private val roleLineRegex = Regex("""(?i)^\d{1,2}\s+(.+)$""")
     private val splitTwoDigitHourRegex = Regex("""(?i)^([0-2])\s*((?:a|p)\.?m\.?.*)$""")
     private val timeRangeRegex = Regex(
-        """(?i)\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\s*(?:-|\u2013|to)\s*(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b"""
+        """(?i)\b(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m?\.?)?\s*(?:-|\u2013|to)\s*(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m?\.?)?\b"""
     )
     private val offRegex = Regex("""(?i)\b(off|pto|vacation|unavailable|day\s*off|not\s*scheduled)\b""")
+    private val shiftLabelRegex = Regex("""(?i)\b(open(?:ing)?|close|closing|mid|truck|inventory)\b""")
 
     fun parse(rawText: String, currentYear: Int = Year.now().value): ParsedSchedule {
         val lines = preprocess(rawText)
@@ -72,7 +73,8 @@ object ScheduleTextParser {
 
         lines.forEach { originalLine ->
             val line = normalizeOcrLine(originalLine)
-            val directDate = dateRegex.find(line)?.let { parseDate(it, currentYear) }
+            val dayHeader = dayHeaderRegex.matchEntire(line)
+            val directDate = if (dayHeader == null) dateRegex.find(line)?.let { parseDate(it, currentYear) } else null
             if (directDate != null) {
                 currentDate = directDate
                 if (offRegex.containsMatchIn(line)) {
@@ -85,7 +87,6 @@ object ScheduleTextParser {
                 }
             }
 
-            val dayHeader = dayHeaderRegex.matchEntire(line)
             if (dayHeader != null) {
                 pendingDayName = dayHeader.groupValues[1]
                 var dayNumber = dayHeader.groupValues[2].toIntOrNull()
@@ -97,20 +98,21 @@ object ScheduleTextParser {
                     dayNumber = null
                 }
                 pendingDayRest = rest.takeIf { it.isNotBlank() }
-                if (dayNumber != null && baseDate != null) {
-                    currentDate = dateNearBase(dayNumber, baseDate)
+                val matchedDate = if (dayNumber != null && baseDate != null) {
+                    dateNearBase(dayNumber, baseDate)
                 } else if (baseDate != null) {
-                    currentDate = dateForWeekday(dayHeader.groupValues[1], baseDate)
+                    dateForWeekday(dayHeader.groupValues[1], baseDate)
                 } else {
-                    currentDate = null
+                    dateForWeekday(dayHeader.groupValues[1], LocalDate.now())
                 }
-                if (currentDate != null && rest.isNotBlank()) {
+                currentDate = matchedDate
+                if (rest.isNotBlank()) {
                     if (offRegex.containsMatchIn(rest)) {
-                        daysOff += currentDate!!
+                        daysOff += matchedDate
                         pendingDayRest = null
                         return@forEach
                     }
-                    parseShift(rest, currentDate!!, roleAndStoreNear(lines, originalLine))?.let {
+                    parseShift(rest, matchedDate, roleAndStoreNear(lines, originalLine))?.let {
                         shifts += it
                         pendingDayRest = null
                         return@forEach
@@ -360,10 +362,12 @@ object ScheduleTextParser {
 
     private fun parseShift(line: String, date: LocalDate, label: String? = null): WorkShift? {
         val timeMatch = timeRangeRegex.find(line) ?: return null
-        val endPeriod = timeMatch.groupValues[6]
-        val startPeriod = timeMatch.groupValues[3].ifBlank {
-            inferStartPeriod(timeMatch.groupValues[1], timeMatch.groupValues[4], endPeriod)
-        }
+        val (startPeriod, endPeriod) = inferPeriods(
+            startHourText = timeMatch.groupValues[1],
+            endHourText = timeMatch.groupValues[4],
+            startPeriodText = timeMatch.groupValues[3],
+            endPeriodText = timeMatch.groupValues[6]
+        )
         val start = parseTime(
             hour = timeMatch.groupValues[1],
             minute = timeMatch.groupValues[2],
@@ -377,17 +381,54 @@ object ScheduleTextParser {
         return if (start == null || end == null) {
             null
         } else {
-            WorkShift(date = date, start = start, end = end, label = label?.takeIf { it.isNotBlank() } ?: "Work")
+            val detectedLabel = shiftLabelRegex.find(line)?.value?.replaceFirstChar { char ->
+                if (char.isLowerCase()) char.titlecase(Locale.US) else char.toString()
+            }
+            WorkShift(date = date, start = start, end = end, label = detectedLabel ?: label?.takeIf { it.isNotBlank() } ?: "Work")
         }
     }
 
-    private fun inferStartPeriod(startHourText: String, endHourText: String, endPeriod: String): String {
-        val startHour = startHourText.toIntOrNull() ?: return endPeriod
-        val endHour = endHourText.toIntOrNull() ?: return endPeriod
+    private fun inferPeriods(
+        startHourText: String,
+        endHourText: String,
+        startPeriodText: String,
+        endPeriodText: String
+    ): Pair<String, String> {
+        val startPeriod = normalizedPeriod(startPeriodText)
+        val endPeriod = normalizedPeriod(endPeriodText)
+        if (startPeriod.isNotBlank() && endPeriod.isNotBlank()) return startPeriod to endPeriod
+        val startHour = startHourText.toIntOrNull() ?: return startPeriod to endPeriod
+        val endHour = endHourText.toIntOrNull() ?: return startPeriod to endPeriod
+        if (startPeriod.isBlank() && endPeriod.isBlank()) {
+            // OCR often drops AM/PM on compact schedules like "Mon 8-4"; assume a normal day shift.
+            return "AM" to if (endHour <= startHour || endHour <= 8) "PM" else "AM"
+        }
+        if (startPeriod.isBlank()) {
+            return inferStartPeriod(startHour, endHour, endPeriod) to endPeriod
+        }
+        return startPeriod to inferEndPeriod(startHour, endHour, startPeriod)
+    }
+
+    private fun inferStartPeriod(startHour: Int, endHour: Int, endPeriod: String): String {
         return when {
-            endPeriod.startsWith("p", ignoreCase = true) && startHour <= endHour -> "pm"
-            endPeriod.startsWith("p", ignoreCase = true) && startHour > endHour -> "am"
+            endPeriod.startsWith("P", ignoreCase = true) && startHour <= endHour -> "PM"
+            endPeriod.startsWith("P", ignoreCase = true) && startHour > endHour -> "AM"
             else -> endPeriod
+        }
+    }
+
+    private fun inferEndPeriod(startHour: Int, endHour: Int, startPeriod: String): String {
+        return when {
+            startPeriod.startsWith("A", ignoreCase = true) && endHour <= startHour -> "PM"
+            else -> startPeriod
+        }
+    }
+
+    private fun normalizedPeriod(period: String): String {
+        return when {
+            period.startsWith("p", ignoreCase = true) -> "PM"
+            period.startsWith("a", ignoreCase = true) -> "AM"
+            else -> ""
         }
     }
 
@@ -398,7 +439,7 @@ object ScheduleTextParser {
             append(minute.ifBlank { "00" })
             if (period.isNotBlank()) {
                 append(" ")
-                append(period.replace(".", "").uppercase(Locale.US))
+                append(normalizedPeriod(period))
             }
         }
         val formatters = listOf(

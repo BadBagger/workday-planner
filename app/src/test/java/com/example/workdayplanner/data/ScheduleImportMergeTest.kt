@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 
 class ScheduleImportMergeTest {
@@ -45,5 +46,30 @@ class ScheduleImportMergeTest {
         assertEquals(listOf(oldSaturday, updatedMonday, nextSaturday), merged.shifts)
         assertTrue(LocalDate.of(2026, 7, 5) in merged.daysOff)
         assertTrue(LocalDate.of(2026, 7, 12) in merged.daysOff)
+    }
+
+    @Test
+    fun deleteShiftUnlinksTasksAndClearsRelatedReminderData() {
+        val shift = WorkShift(
+            id = "shift-1",
+            date = LocalDate.of(2026, 7, 8),
+            start = LocalTime.of(9, 0),
+            end = LocalTime.of(17, 0)
+        )
+        val linkedTask = TaskItem(
+            id = "task-1",
+            title = "Bring uniform",
+            linkedShiftId = shift.id,
+            deadline = LocalDateTime.of(2026, 7, 8, 8, 30),
+            alarmAt = LocalDateTime.of(2026, 7, 8, 8, 0)
+        )
+        val state = AppState(shifts = listOf(shift), tasks = listOf(linkedTask))
+
+        val updated = removeShiftAndUnlinkTasks(state, shift.id)
+
+        assertTrue(updated.shifts.isEmpty())
+        assertEquals(null, updated.tasks.first().linkedShiftId)
+        assertEquals(null, updated.tasks.first().alarmAt)
+        assertEquals(LocalDateTime.of(2026, 7, 8, 8, 30), updated.tasks.first().deadline)
     }
 }

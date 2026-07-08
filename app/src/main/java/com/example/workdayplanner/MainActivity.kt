@@ -12,7 +12,6 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -35,12 +34,6 @@ class MainActivity : ComponentActivity() {
                     ActivityResultContracts.RequestPermission()
                 ) {}
 
-                LaunchedEffect(Unit) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                }
-
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -48,7 +41,12 @@ class MainActivity : ComponentActivity() {
                     PlannerApp(
                         viewModel = viewModel,
                         requestedTaskId = requestedTaskId,
-                        onTaskRequestHandled = { requestedTaskId = null }
+                        onTaskRequestHandled = { requestedTaskId = null },
+                        onNotificationPermissionNeeded = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                        }
                     )
                 }
             }
