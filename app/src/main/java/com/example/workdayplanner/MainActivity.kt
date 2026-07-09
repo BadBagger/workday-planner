@@ -10,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
@@ -17,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.workdayplanner.data.AppearanceMode
 import com.example.workdayplanner.ui.PlannerApp
 import com.example.workdayplanner.ui.WorkdayPlannerTheme
 
@@ -29,7 +31,13 @@ class MainActivity : ComponentActivity() {
         requestedTaskId = intent.getStringExtra(EXTRA_OPEN_TASK_ID)
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
-            WorkdayPlannerTheme(darkMode = state.darkMode, accentStyle = state.accentStyle) {
+            val systemDark = isSystemInDarkTheme()
+            val useDarkMode = when (state.appearanceMode) {
+                AppearanceMode.Light -> false
+                AppearanceMode.Dark -> true
+                AppearanceMode.System -> systemDark
+            }
+            WorkdayPlannerTheme(darkMode = useDarkMode, accentStyle = state.accentStyle) {
                 val notificationPermission = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission()
                 ) {}

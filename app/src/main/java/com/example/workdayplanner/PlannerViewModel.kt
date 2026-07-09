@@ -9,6 +9,7 @@ import com.example.workdayplanner.alarm.AlarmScheduler
 import com.example.workdayplanner.calendar.CalendarSyncManager
 import com.example.workdayplanner.calendar.DeviceCalendar
 import com.example.workdayplanner.data.AccentStyle
+import com.example.workdayplanner.data.AppearanceMode
 import com.example.workdayplanner.data.AppState
 import com.example.workdayplanner.data.ParsedSchedule
 import com.example.workdayplanner.data.PaySettings
@@ -352,6 +353,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun setDarkMode(enabled: Boolean) {
         repository.setDarkMode(enabled)
+    }
+
+    fun setAppearanceMode(mode: AppearanceMode) {
+        repository.setAppearanceMode(mode)
     }
 
     fun setAccentStyle(style: AccentStyle) {

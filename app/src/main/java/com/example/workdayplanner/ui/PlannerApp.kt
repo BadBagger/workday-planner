@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,7 +55,6 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
@@ -62,12 +62,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -97,6 +99,8 @@ import com.example.workdayplanner.PlannerViewModel
 import com.example.workdayplanner.TrainingImportUiState
 import com.example.workdayplanner.calendar.DeviceCalendar
 import com.example.workdayplanner.data.AccentStyle
+import com.example.workdayplanner.data.AppearanceMode
+import com.example.workdayplanner.data.AppThemeStyle
 import com.example.workdayplanner.data.AppState
 import com.example.workdayplanner.data.CarryOverBehavior
 import com.example.workdayplanner.data.LinkedShiftType
@@ -211,6 +215,7 @@ fun PlannerApp(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             AppTopBar(
                 title = when {
@@ -230,7 +235,7 @@ fun PlannerApp(
         },
         bottomBar = {
             if (!showIntro) {
-                NavigationBar {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     topLevel.forEach { screen ->
                         NavigationBarItem(
                             selected = currentRoute == screen.route,
@@ -242,21 +247,20 @@ fun PlannerApp(
                             },
                             icon = { Icon(screen.icon, contentDescription = screen.label) },
                             label = { Text(screen.label, maxLines = 1) },
-                            alwaysShowLabel = true
+                            alwaysShowLabel = true,
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         )
                     }
                 }
             }
         },
-        floatingActionButton = {
-            if (!showIntro && currentRoute == Screen.Tasks.route) {
-                ExtendedFloatingActionButton(
-                    onClick = { navController.navigate("${Screen.TaskDetail.route}/new") },
-                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text("New task") }
-                )
-            }
-        }
+        floatingActionButton = {}
     ) { padding ->
         if (showIntro) {
             WorkdayIntroScreen(
@@ -369,7 +373,7 @@ fun PlannerApp(
                 } else {
                     SettingsScreen(
                         state = state,
-                        onDarkModeChanged = viewModel::setDarkMode,
+                        onAppearanceModeChanged = viewModel::setAppearanceMode,
                         onAccentStyleChanged = viewModel::setAccentStyle,
                         onWidgetLayoutModeChanged = viewModel::setWidgetLayoutMode,
                         onPaySettingsChanged = viewModel::setPaySettings,
@@ -516,7 +520,13 @@ private fun IntroFeatureCard(icon: ImageVector, title: String, body: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppTopBar(title: String) {
-    TopAppBar(title = { Text(title, fontWeight = FontWeight.SemiBold) })
+    TopAppBar(
+        title = { Text(title, fontWeight = FontWeight.SemiBold) },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface
+        )
+    )
 }
 
 @Composable
@@ -875,19 +885,19 @@ private fun TaskFocusCard(
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 FocusChip(
                     label = "$overdueCount overdue",
-                    color = Color(0xFFFF5A66),
+                    color = MaterialTheme.colorScheme.error,
                     enabled = overdueCount > 0,
                     onClick = onShowOverdue
                 )
                 FocusChip(
                     label = "$criticalCount critical",
-                    color = Color(0xFFFF5A66),
+                    color = MaterialTheme.colorScheme.error,
                     enabled = criticalCount > 0,
                     onClick = onShowImportant
                 )
                 FocusChip(
                     label = "$dueSoonCount due soon",
-                    color = Color(0xFFFFB020),
+                    color = MaterialTheme.colorScheme.warning,
                     enabled = dueSoonCount > 0,
                     onClick = onShowDeadline
                 )
@@ -1149,14 +1159,15 @@ private fun ManagerDashboardCard(
 ) {
     val attentionCount = overdueCount + dueSoonCount
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
                 "Manager dashboard",
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1166,16 +1177,16 @@ private fun ManagerDashboardCard(
                     onClick = onViewOverdue,
                     label = { Text("$overdueCount overdue") },
                     colors = AssistChipDefaults.assistChipColors(
-                        containerColor = Color(0xFFFF5A66).copy(alpha = 0.16f),
-                        labelColor = Color(0xFFFF5A66)
+                        containerColor = MaterialTheme.colorScheme.dangerContainer,
+                        labelColor = MaterialTheme.colorScheme.onDangerContainer
                     )
                 )
                 AssistChip(
                     onClick = onViewDueSoon,
                     label = { Text("$dueSoonCount due soon") },
                     colors = AssistChipDefaults.assistChipColors(
-                        containerColor = Color(0xFFFFB020).copy(alpha = 0.16f),
-                        labelColor = Color(0xFFFFB020)
+                        containerColor = MaterialTheme.colorScheme.warningContainer,
+                        labelColor = MaterialTheme.colorScheme.onWarningContainer
                     )
                 )
                 AssistChip(
@@ -1184,8 +1195,8 @@ private fun ManagerDashboardCard(
                     },
                     label = { Text("$attentionCount need attention") },
                     colors = AssistChipDefaults.assistChipColors(
-                        containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.22f),
-                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        labelColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 )
             }
@@ -1222,8 +1233,8 @@ private data class TrainingAssociateGroup(
 @Composable
 private fun TrainingAssociateCard(group: TrainingAssociateGroup, today: LocalDate) {
     val statusColor = when {
-        group.overdueCount > 0 -> Color(0xFFFF5A66)
-        group.dueSoonCount > 0 -> Color(0xFFFFB020)
+        group.overdueCount > 0 -> MaterialTheme.colorScheme.error
+        group.dueSoonCount > 0 -> MaterialTheme.colorScheme.warning
         else -> MaterialTheme.colorScheme.primary
     }
     Card(
@@ -1247,16 +1258,16 @@ private fun TrainingAssociateCard(group: TrainingAssociateGroup, today: LocalDat
                         onClick = {},
                         label = { Text("${group.overdueCount} overdue") },
                         colors = AssistChipDefaults.assistChipColors(
-                            containerColor = Color(0xFFFF5A66).copy(alpha = 0.16f),
-                            labelColor = Color(0xFFFF5A66)
+                            containerColor = MaterialTheme.colorScheme.dangerContainer,
+                            labelColor = MaterialTheme.colorScheme.onDangerContainer
                         )
                     )
                     AssistChip(
                         onClick = {},
                         label = { Text("${group.dueSoonCount} due soon") },
                         colors = AssistChipDefaults.assistChipColors(
-                            containerColor = Color(0xFFFFB020).copy(alpha = 0.16f),
-                            labelColor = Color(0xFFFFB020)
+                            containerColor = MaterialTheme.colorScheme.warningContainer,
+                            labelColor = MaterialTheme.colorScheme.onWarningContainer
                         )
                     )
                     if (group.completedCount > 0) AssistChip(onClick = {}, label = { Text("${group.completedCount} done") })
@@ -1437,20 +1448,20 @@ private fun TrainingSummaryCard(
                 AssistChip(onClick = {}, label = { Text("$openCount open") })
                 AssistChip(
                     onClick = {},
-                    label = { Text("$overdueCount overdue") },
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = Color(0xFFFF5A66).copy(alpha = 0.16f),
-                        labelColor = Color(0xFFFF5A66)
+                        label = { Text("$overdueCount overdue") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.dangerContainer,
+                            labelColor = MaterialTheme.colorScheme.onDangerContainer
+                        )
                     )
-                )
                 AssistChip(
                     onClick = {},
-                    label = { Text("$dueSoonCount due 7 days") },
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = Color(0xFFFFB020).copy(alpha = 0.16f),
-                        labelColor = Color(0xFFFFB020)
+                        label = { Text("$dueSoonCount due 7 days") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.warningContainer,
+                            labelColor = MaterialTheme.colorScheme.onWarningContainer
+                        )
                     )
-                )
                 AssistChip(onClick = {}, label = { Text("$noDateCount no date") })
             }
             OutlinedButton(
@@ -1476,9 +1487,9 @@ private fun TrainingItemCard(
     onDelete: () -> Unit
 ) {
     val statusColor = when {
-        item.completedAt != null -> Color(0xFF54D17A)
-        item.dueDate?.isBefore(today) == true -> Color(0xFFFF5A66)
-        item.dueDate?.let { !it.isAfter(today.plusDays(7)) } == true -> Color(0xFFFFB020)
+        item.completedAt != null -> MaterialTheme.colorScheme.success
+        item.dueDate?.isBefore(today) == true -> MaterialTheme.colorScheme.error
+        item.dueDate?.let { !it.isAfter(today.plusDays(7)) } == true -> MaterialTheme.colorScheme.warning
         else -> MaterialTheme.colorScheme.primary
     }
     Card(
@@ -1589,26 +1600,111 @@ private fun CommandCenterCard(
         .filter { shift -> shift.endDateTime().isAfter(now) }
         .minWithOrNull(compareBy<WorkShift> { it.date }.thenBy { it.start })
     val todayStatus = today.workStatusLabel(state, todayShifts)
+    val todayTasks = state.tasks.filter { !it.completed && it.deadline?.toLocalDate() == today && !it.isSkippedBecauseDayOff(state, today) }
+    val overdueTasks = state.tasks.filter { !it.completed && it.deadline?.isBefore(now) == true }
+    val remindersToday = state.tasks.filter { !it.completed && it.alarmAt?.toLocalDate() == today }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text("Today", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                Text(today.format(dateFormatter), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            DashboardStatusPill(todayStatus)
+        }
+        NextShiftDashboardCard(
+            nextShift = nextShift,
+            now = now,
+            hasAnySchedule = state.shifts.isNotEmpty() || state.daysOff.isNotEmpty(),
+            onImportSchedule = onImportSchedule,
+            onScheduleShortcut = onScheduleShortcut
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            DashboardStatCard(
+                label = "Work tasks",
+                value = todayTasks.size.coerceAtLeast(todayTaskCount).toString(),
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.weight(1f)
+            )
+            DashboardStatCard(
+                label = "Overdue",
+                value = overdueTasks.size.coerceAtLeast(overdueTaskCount).toString(),
+                containerColor = MaterialTheme.colorScheme.dangerContainer,
+                contentColor = MaterialTheme.colorScheme.onDangerContainer,
+                modifier = Modifier.weight(1f)
+            )
+            DashboardStatCard(
+                label = "Reminders",
+                value = remindersToday.size.coerceAtLeast(upcomingAlarmCount).toString(),
+                containerColor = MaterialTheme.colorScheme.warningContainer,
+                contentColor = MaterialTheme.colorScheme.onWarningContainer,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        if (state.paySettings.showPayOnDashboard && state.paySettings.hourlyRate > 0.0) {
+            DashboardPayEstimateCard(state)
+        }
+        TodayWorkTasksCard(
+            tasks = todayTasks,
+            hasSchedule = state.shifts.isNotEmpty(),
+            onAddFromTemplate = onAddRepeatingTask,
+            onAddTask = onAddTask
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            DashboardActionButton("Add shift", Icons.Default.CalendarMonth, onScheduleShortcut, Modifier.weight(1f), outlined = true)
+            DashboardActionButton("Import schedule", Icons.Default.FileUpload, onImportSchedule, Modifier.weight(1f), outlined = true)
+        }
+        OutlinedButton(onClick = onMarkTodayOff, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Default.CalendarMonth, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Mark day off")
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LegacyCommandCenterCard(
+    state: AppState,
+    overdueTaskCount: Int,
+    todayTaskCount: Int,
+    upcomingAlarmCount: Int,
+    onAddTask: () -> Unit,
+    onAddRepeatingTask: () -> Unit,
+    onScheduleShortcut: () -> Unit,
+    onImportSchedule: () -> Unit,
+    onMarkTodayOff: () -> Unit
+) {
+    val today = LocalDate.now()
+    val now = LocalDateTime.now()
+    val todayShifts = state.shifts.filter { it.date == today }.sortedBy { it.start }
+    val nextShift = state.shifts
+        .filter { shift -> shift.endDateTime().isAfter(now) }
+        .minWithOrNull(compareBy<WorkShift> { it.date }.thenBy { it.start })
+    val todayStatus = today.workStatusLabel(state, todayShifts)
     val todayPay = PayEstimator.estimateDay(state, today)
     val todayTasks = state.tasks.filter { !it.completed && it.deadline?.toLocalDate() == today && !it.isSkippedBecauseDayOff(state, today) }
     val overdueTasks = state.tasks.filter { !it.completed && it.deadline?.isBefore(now) == true }
     val remindersToday = state.tasks.filter { !it.completed && it.alarmAt?.toLocalDate() == today }
 
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
                 "Today",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = MaterialTheme.colorScheme.onSurface
             )
             Text(
                 today.format(dateFormatter),
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             DashboardStatusPill(todayStatus)
             NextShiftDashboardCard(
@@ -1619,12 +1715,24 @@ private fun CommandCenterCard(
                 onScheduleShortcut = onScheduleShortcut
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                DashboardMetricChip("${todayTasks.size.coerceAtLeast(todayTaskCount)} work tasks", MaterialTheme.colorScheme.primary)
-                DashboardMetricChip("${overdueTasks.size.coerceAtLeast(overdueTaskCount)} overdue", Color(0xFFE45B3C))
-                DashboardMetricChip("${remindersToday.size.coerceAtLeast(upcomingAlarmCount)} reminders", Color(0xFFFFB020))
+                DashboardMetricChip(
+                    "${todayTasks.size.coerceAtLeast(todayTaskCount)} work tasks",
+                    MaterialTheme.colorScheme.primaryContainer,
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                DashboardMetricChip(
+                    "${overdueTasks.size.coerceAtLeast(overdueTaskCount)} overdue",
+                    MaterialTheme.colorScheme.dangerContainer,
+                    MaterialTheme.colorScheme.onDangerContainer
+                )
+                DashboardMetricChip(
+                    "${remindersToday.size.coerceAtLeast(upcomingAlarmCount)} reminders",
+                    MaterialTheme.colorScheme.warningContainer,
+                    MaterialTheme.colorScheme.onWarningContainer
+                )
                 if (state.paySettings.showPayOnDashboard && state.paySettings.hourlyRate > 0.0 && todayPay.paidHours > 0.0) {
-                    DashboardMetricChip("$${todayPay.grossPay.toMoneyString()} today", MaterialTheme.colorScheme.tertiary)
-                    DashboardMetricChip("${todayPay.paidHours.toSimpleString()} paid hrs", MaterialTheme.colorScheme.tertiary)
+                    DashboardMetricChip("$${todayPay.grossPay.toMoneyString()} today", MaterialTheme.colorScheme.successContainer, MaterialTheme.colorScheme.onSuccessContainer)
+                    DashboardMetricChip("${todayPay.paidHours.toSimpleString()} paid hrs", MaterialTheme.colorScheme.successContainer, MaterialTheme.colorScheme.onSuccessContainer)
                 }
             }
             if (state.paySettings.showPayOnDashboard && state.paySettings.hourlyRate > 0.0) {
@@ -1658,18 +1766,86 @@ private fun CommandCenterCard(
 }
 
 @Composable
+private fun DashboardStatCard(
+    label: String,
+    value: String,
+    containerColor: Color,
+    contentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = containerColor), modifier = modifier) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = contentColor)
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = contentColor.copy(alpha = 0.82f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun TodayWorkTasksCard(
+    tasks: List<TaskItem>,
+    hasSchedule: Boolean,
+    onAddFromTemplate: () -> Unit,
+    onAddTask: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionHeader("Today’s work tasks", "Work items due during this shift day.")
+            val visible = tasks.take(3)
+            if (visible.isEmpty()) {
+                Text(
+                    if (hasSchedule) "No tasks due today. Add a checklist or one-off reminder when needed." else "No tasks due today.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                visible.forEach { task ->
+                    Text(task.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                }
+                if (tasks.size > visible.size) {
+                    Text("+${tasks.size - visible.size} more", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onAddFromTemplate, modifier = Modifier.weight(1f)) {
+                    Text("Add from template")
+                }
+                Button(onClick = onAddTask, modifier = Modifier.weight(1f)) {
+                    Text("New task")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun DashboardStatusPill(label: String) {
-    val color = when (label) {
-        "Workday" -> MaterialTheme.colorScheme.primary
-        "Vacation" -> MaterialTheme.colorScheme.tertiary
-        "Sick Day" -> Color(0xFFE45B3C)
-        "Day Off" -> MaterialTheme.colorScheme.secondary
-        else -> MaterialTheme.colorScheme.outline
+    val containerColor = when (label) {
+        "Workday" -> MaterialTheme.colorScheme.primaryContainer
+        "Vacation", "Day Off" -> MaterialTheme.colorScheme.secondaryContainer
+        "Sick Day" -> MaterialTheme.colorScheme.dangerContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val labelColor = when (label) {
+        "Workday" -> MaterialTheme.colorScheme.onPrimaryContainer
+        "Vacation", "Day Off" -> MaterialTheme.colorScheme.onSecondaryContainer
+        "Sick Day" -> MaterialTheme.colorScheme.onDangerContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     AssistChip(
         onClick = {},
         label = { Text(label) },
-        colors = AssistChipDefaults.assistChipColors(containerColor = color.copy(alpha = 0.18f), labelColor = color)
+        colors = AssistChipDefaults.assistChipColors(containerColor = containerColor, labelColor = labelColor)
     )
 }
 
@@ -1682,7 +1858,8 @@ private fun NextShiftDashboardCard(
     onScheduleShortcut: () -> Unit
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -1712,7 +1889,8 @@ private fun NextShiftDashboardCard(
 @Composable
 private fun DashboardTaskPreview(title: String, tasks: List<TaskItem>, emptyText: String) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -1790,13 +1968,13 @@ private fun DashboardInfoCard(title: String, value: String, detail: String?, str
 }
 
 @Composable
-private fun DashboardMetricChip(label: String, color: Color) {
+private fun DashboardMetricChip(label: String, containerColor: Color, labelColor: Color) {
     AssistChip(
         onClick = {},
         label = { Text(label) },
         colors = AssistChipDefaults.assistChipColors(
-            containerColor = color.copy(alpha = 0.16f),
-            labelColor = color
+            containerColor = containerColor,
+            labelColor = labelColor
         )
     )
 }
@@ -1806,8 +1984,8 @@ private fun DashboardPayEstimateCard(state: AppState) {
     val week = PayEstimator.estimateWeek(state)
     val period = PayEstimator.estimatePayPeriod(state)
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.18f)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1887,15 +2065,16 @@ private fun Duration.toFriendlyDuration(): String {
 private fun ScheduleRiskSection(risks: List<ScheduleRisk>) {
     if (risks.isEmpty()) return
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.warningContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.warning.copy(alpha = 0.45f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Watch-outs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Watch-outs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onWarningContainer)
             risks.forEach { risk ->
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(risk.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                    Text(risk.detail, style = MaterialTheme.typography.bodySmall)
+                    Text(risk.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onWarningContainer)
+                    Text(risk.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onWarningContainer)
                 }
             }
         }
@@ -1933,7 +2112,7 @@ private fun TimecardSection(
                 OutlinedButton(onClick = onEndLunch, enabled = entry?.lunchStart != null && entry.lunchEnd == null && entry.clockOut == null) {
                     Text("Lunch end")
                 }
-                Button(onClick = onClockOut, enabled = entry?.clockIn != null && entry.clockOut == null) { Text("Clock out") }
+                OutlinedButton(onClick = onClockOut, enabled = entry?.clockIn != null && entry.clockOut == null) { Text("Clock out") }
             }
             TimePunchRows(entry)
             if (summary != null) {
@@ -2310,8 +2489,8 @@ private fun EventCard(event: WorkEvent, onClick: () -> Unit, onDelete: () -> Uni
     val context = LocalContext.current
     Card(
         onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2440,7 +2619,7 @@ private fun TaskCard(
                     }
                 }
                 scheduleInsight.warning?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFFFB020), fontWeight = FontWeight.SemiBold)
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.warning, fontWeight = FontWeight.SemiBold)
                 }
                 scheduleInsight.suggestion?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -3090,40 +3269,40 @@ private fun CustomRepeatDays(
 
 @Composable
 private fun TaskPriority.priorityColor(): Color = when (this) {
-    TaskPriority.Low -> Color(0xFF7E8798)
-    TaskPriority.Normal -> MaterialTheme.colorScheme.outline
-    TaskPriority.High -> Color(0xFFFFB020)
-    TaskPriority.Critical -> Color(0xFFFF5A66)
+    TaskPriority.Low -> MaterialTheme.colorScheme.onSurfaceVariant
+    TaskPriority.Normal -> MaterialTheme.colorScheme.secondary
+    TaskPriority.High -> MaterialTheme.colorScheme.warning
+    TaskPriority.Critical -> MaterialTheme.colorScheme.error
 }
 
 @Composable
 private fun TaskCategory.categoryColor(): Color = when (this) {
     TaskCategory.General -> MaterialTheme.colorScheme.primary
-    TaskCategory.Orders -> Color(0xFF4DB6FF)
-    TaskCategory.Cleaning -> Color(0xFF54D17A)
-    TaskCategory.Prep -> Color(0xFFFFB020)
-    TaskCategory.Admin -> Color(0xFFB18CFF)
-    TaskCategory.Personal -> Color(0xFFFF7AB6)
+    TaskCategory.Orders -> MaterialTheme.colorScheme.tertiary
+    TaskCategory.Cleaning -> MaterialTheme.colorScheme.success
+    TaskCategory.Prep -> MaterialTheme.colorScheme.warning
+    TaskCategory.Admin -> MaterialTheme.colorScheme.secondary
+    TaskCategory.Personal -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 @Composable
 private fun TaskScheduleLabel.scheduleLabelColor(): Color = when (this) {
     TaskScheduleLabel.BeforeWork -> MaterialTheme.colorScheme.primary
     TaskScheduleLabel.AfterWork -> MaterialTheme.colorScheme.secondary
-    TaskScheduleLabel.DayOffTask -> Color(0xFF7E8798)
-    TaskScheduleLabel.DueDuringShift -> Color(0xFFFFB020)
+    TaskScheduleLabel.DayOffTask -> MaterialTheme.colorScheme.onSurfaceVariant
+    TaskScheduleLabel.DueDuringShift -> MaterialTheme.colorScheme.warning
     TaskScheduleLabel.QuickTask -> MaterialTheme.colorScheme.outline
-    TaskScheduleLabel.Overdue -> Color(0xFFFF5A66)
-    TaskScheduleLabel.RepeatsNextWorkday -> Color(0xFF54D17A)
-    TaskScheduleLabel.SkippedDayOff -> Color(0xFFFFB020)
+    TaskScheduleLabel.Overdue -> MaterialTheme.colorScheme.error
+    TaskScheduleLabel.RepeatsNextWorkday -> MaterialTheme.colorScheme.success
+    TaskScheduleLabel.SkippedDayOff -> MaterialTheme.colorScheme.warning
 }
 
 @Composable
 private fun LocalDateTime.deadlineColor(): Color {
     val now = LocalDateTime.now()
     return when {
-        isBefore(now) -> Color(0xFFFF5A66)
-        isBefore(now.plusHours(12)) -> Color(0xFFFFB020)
+        isBefore(now) -> MaterialTheme.colorScheme.error
+        isBefore(now.plusHours(12)) -> MaterialTheme.colorScheme.warning
         else -> MaterialTheme.colorScheme.primary
     }
 }
@@ -3218,14 +3397,15 @@ private fun ScheduleHero(state: AppState) {
         .filter { !it.date.isBefore(LocalDate.now()) }
         .minWithOrNull(compareBy<WorkShift> { it.date }.thenBy { it.start })
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
                 "Work calendar",
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
@@ -3233,7 +3413,7 @@ private fun ScheduleHero(state: AppState) {
                     "Next shift: ${it.date.format(dateFormatter)} at ${it.start.format(timeFormatter)}"
                 } ?: "No upcoming shift imported",
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AssistChip(onClick = {}, label = { Text("${state.shifts.size} shifts") })
@@ -3246,47 +3426,81 @@ private fun ScheduleHero(state: AppState) {
 @Composable
 private fun StyleSection(
     state: AppState,
-    onDarkModeChanged: (Boolean) -> Unit,
+    onAppearanceModeChanged: (AppearanceMode) -> Unit,
     onAccentStyleChanged: (AccentStyle) -> Unit,
     onWidgetLayoutModeChanged: (WidgetLayoutMode) -> Unit,
     onOpenPremium: () -> Unit
 ) {
     val themeUnlocked = PremiumAccess.canUse(state, PremiumFeature.ThemeCustomization)
     val widgetUnlocked = PremiumAccess.canUse(state, PremiumFeature.Widgets)
+    val systemDark = isSystemInDarkTheme()
+    val previewDarkMode = when (state.appearanceMode) {
+        AppearanceMode.Light -> false
+        AppearanceMode.Dark -> true
+        AppearanceMode.System -> systemDark
+    }
+    var previewStyle by remember(state.accentStyle) { mutableStateOf(state.accentStyle) }
+    var lockedStyle by remember { mutableStateOf<AppThemeStyle?>(null) }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Style Packs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "Current theme: ${state.accentStyle.label}",
+                "Choose your Workday look. Default light and dark stay free.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.weight(1f)) {
-                    Text("Dark mode", style = MaterialTheme.typography.bodyLarge)
-                    Text("App and widgets use the same mood.", style = MaterialTheme.typography.bodySmall)
-                }
-                Switch(checked = state.darkMode, onCheckedChange = onDarkModeChanged)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                AccentStyle.entries.forEach { style ->
-                    val canSelect = themeUnlocked || style == state.accentStyle
-                    if (state.accentStyle == style) {
-                        Button(onClick = { onAccentStyleChanged(style) }, modifier = Modifier.weight(1f)) {
-                            Text(style.label)
-                        }
-                    } else {
-                        OutlinedButton(onClick = { if (canSelect) onAccentStyleChanged(style) else onOpenPremium() }, modifier = Modifier.weight(1f)) {
-                            Text(style.label)
-                        }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Appearance mode", style = MaterialTheme.typography.bodyLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AppearanceMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = state.appearanceMode == mode,
+                            onClick = { onAppearanceModeChanged(mode) },
+                            label = { Text(mode.label) }
+                        )
                     }
                 }
+                Text(
+                    if (state.appearanceMode == AppearanceMode.System) {
+                        "Using Android's current ${if (systemDark) "dark" else "light"} setting."
+                    } else {
+                        "${state.appearanceMode.label} mode is applied."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            if (!themeUnlocked) PremiumLockedInline(PremiumFeature.ThemeCustomization, "Dark mode stays free. Premium unlocks accent customization.", onOpenPremium)
+            ThemePreviewCard(style = previewStyle, darkMode = previewDarkMode)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AccentStyle.entries.forEach { style ->
+                    val locked = style.premium && !themeUnlocked
+                    FilterChip(
+                        selected = state.accentStyle == style,
+                        onClick = {
+                            previewStyle = style
+                            if (locked) {
+                                lockedStyle = style
+                            } else {
+                                onAccentStyleChanged(style)
+                            }
+                        },
+                        label = { Text(if (locked) "${style.label} - Premium" else style.label) }
+                    )
+                }
+            }
+            lockedStyle?.let { style ->
+                PremiumThemeUpsell(
+                    style = style,
+                    onPreview = { previewStyle = style },
+                    onUnlock = onOpenPremium,
+                    onDismiss = { lockedStyle = null }
+                )
+            }
+            if (!themeUnlocked) PremiumLockedInline(PremiumFeature.ThemeCustomization, "Premium unlocks extra style packs, widgets, advanced planning tools, and personalization.", onOpenPremium)
             Text("Planner widget", style = MaterialTheme.typography.labelLarge)
             if (!widgetUnlocked) PremiumLockedInline(PremiumFeature.Widgets, "Premium unlocks widget customization and richer widget layouts.", onOpenPremium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -3312,6 +3526,89 @@ private fun StyleSection(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+@Composable
+private fun ThemePreviewCard(style: AppThemeStyle, darkMode: Boolean) {
+    MaterialTheme(colorScheme = workdayColorScheme(style, darkMode), typography = MaterialTheme.typography) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.background),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text(style.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(if (darkMode) "Dark preview" else "Light preview", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("Workday") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    )
+                }
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("Next shift", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Opening shift", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text("6:00 AM - 3:00 PM", style = MaterialTheme.typography.bodySmall)
+                        Text("Starts in 1h 20m", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = {}, modifier = Modifier.weight(1f)) { Text("Clock in") }
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("Reminder") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.warningContainer,
+                            labelColor = MaterialTheme.colorScheme.onWarningContainer
+                        )
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp)
+                ) {
+                    Text("Today", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                    Text("Schedule", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+                    Text("Settings", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PremiumThemeUpsell(
+    style: AppThemeStyle,
+    onPreview: () -> Unit,
+    onUnlock: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("${style.label} is a premium style pack", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Premium unlocks extra style packs, widgets, advanced planning tools, and personalization.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onPreview, modifier = Modifier.weight(1f)) { Text("Preview theme") }
+                Button(onClick = onUnlock, modifier = Modifier.weight(1f)) { Text("Unlock Premium") }
+            }
+            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Not now") }
         }
     }
 }
@@ -3478,10 +3775,10 @@ private fun EarningsSummaryCard(
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Earnings summary", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             PayBreakdownLine("Regular pay", estimate.regularPay, MaterialTheme.colorScheme.primary)
-            PayBreakdownLine("Overtime pay", estimate.overtimePay, Color(0xFFFFB020))
-            PayBreakdownLine("Shift differential", estimate.differentialPay, Color(0xFF54D17A))
+            PayBreakdownLine("Overtime pay", estimate.overtimePay, MaterialTheme.colorScheme.warning)
+            PayBreakdownLine("Shift differential", estimate.differentialPay, MaterialTheme.colorScheme.success)
             Divider()
-            PayBreakdownLine("Estimated gross pay", estimate.grossPay, Color(0xFF4DB6FF), emphasized = true)
+            PayBreakdownLine("Estimated gross pay", estimate.grossPay, MaterialTheme.colorScheme.secondary, emphasized = true)
             Text(
                 "Hours: ${paidHours.toSimpleString()} paid / ${regularHours.toSimpleString()} regular" +
                     if (overtimeHours > 0.0) " / ${overtimeHours.toSimpleString()} OT" else "",
@@ -3831,11 +4128,12 @@ private fun ScheduleOverviewCard(state: AppState) {
         .filter { !it.date.isBefore(currentWeekStart) && !it.date.isAfter(currentWeekEnd) }
         .sumOf { it.durationMinutes() } / 60.0
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Schedule", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            Text("Schedule", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
             Text(
                 when {
                     today in state.daysOff -> "Today is marked as a day off."
@@ -3843,13 +4141,13 @@ private fun ScheduleOverviewCard(state: AppState) {
                     else -> "No shift scheduled today."
                 },
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
                 nextShift?.let { "Next shift ${it.timeUntilShift(now)}: ${it.date.format(dateFormatter)} at ${it.start.format(timeFormatter)}" }
                     ?: "No upcoming shift saved.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AssistChip(onClick = {}, label = { Text("${state.shifts.count { !it.date.isBefore(today) }} upcoming shifts") })
@@ -4239,7 +4537,7 @@ private fun ScheduleEmptyState(onImportSchedule: () -> Unit, onAddShift: () -> U
 @Composable
 private fun SettingsScreen(
     state: AppState,
-    onDarkModeChanged: (Boolean) -> Unit,
+    onAppearanceModeChanged: (AppearanceMode) -> Unit,
     onAccentStyleChanged: (AccentStyle) -> Unit,
     onWidgetLayoutModeChanged: (WidgetLayoutMode) -> Unit,
     onPaySettingsChanged: (PaySettings) -> Unit,
@@ -4257,7 +4555,7 @@ private fun SettingsScreen(
     ) {
         StyleSection(
             state = state,
-            onDarkModeChanged = onDarkModeChanged,
+            onAppearanceModeChanged = onAppearanceModeChanged,
             onAccentStyleChanged = onAccentStyleChanged,
             onWidgetLayoutModeChanged = onWidgetLayoutModeChanged,
             onOpenPremium = onOpenPremium
@@ -4318,11 +4616,15 @@ private fun PremiumScreen(
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), modifier = Modifier.fillMaxWidth()) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Workday Planner Premium", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    Text("The free app covers basic shifts, tasks, reminders, days off, a few imports, and the Today dashboard.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    Text("Premium unlocks convenience and power-user tools without hiding existing data.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text("Workday Planner Premium", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                    Text("The free app covers basic shifts, tasks, reminders, days off, a few imports, and the Today dashboard.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Premium unlocks convenience and power-user tools without hiding existing data.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -4921,9 +5223,9 @@ private fun ScheduleReviewRowCard(row: ScheduleReviewRow, onChange: (ScheduleRev
 @Composable
 private fun ConfidenceChip(confidence: ScheduleImportConfidence) {
     val color = when (confidence) {
-        ScheduleImportConfidence.High -> Color(0xFF54D17A)
-        ScheduleImportConfidence.NeedsReview -> Color(0xFFFFB020)
-        ScheduleImportConfidence.Unclear -> Color(0xFFFF5A66)
+        ScheduleImportConfidence.High -> MaterialTheme.colorScheme.success
+        ScheduleImportConfidence.NeedsReview -> MaterialTheme.colorScheme.warning
+        ScheduleImportConfidence.Unclear -> MaterialTheme.colorScheme.error
     }
     AssistChip(
         onClick = {},

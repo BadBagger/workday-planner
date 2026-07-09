@@ -312,7 +312,7 @@ private object WidgetStore {
             shifts = root.optJSONArray("shifts").toShifts(),
             daysOff = root.optJSONArray("daysOff").toDates(),
             darkMode = root.optBoolean("darkMode", false),
-            accentStyle = root.optString("accentStyle", "Classic"),
+            accentStyle = root.optString("accentStyle", "Default"),
             widgetLayoutMode = runCatching {
                 WidgetLayoutMode.valueOf(root.optString("widgetLayoutMode", WidgetLayoutMode.Standard.name))
             }.getOrDefault(WidgetLayoutMode.Standard)
@@ -383,7 +383,7 @@ private data class WidgetState(
     val shifts: List<WidgetShift> = emptyList(),
     val daysOff: Set<LocalDate> = emptySet(),
     val darkMode: Boolean = false,
-    val accentStyle: String = "Classic",
+    val accentStyle: String = "Default",
     val widgetLayoutMode: WidgetLayoutMode = WidgetLayoutMode.Standard
 )
 
@@ -436,27 +436,30 @@ private data class WidgetPalette(
     companion object {
         fun from(state: WidgetState): WidgetPalette {
             val accent = when (state.accentStyle) {
-                "Classic" -> if (state.darkMode) 0xFFFFB36B.toInt() else 0xFF9B4A15.toInt()
-                "Emerald" -> if (state.darkMode) 0xFFA7D98B.toInt() else 0xFF2D6B3F.toInt()
-                "Sunrise" -> if (state.darkMode) 0xFFFFC477.toInt() else 0xFFB35C16.toInt()
-                "Logo" -> if (state.darkMode) 0xFF35E0D4.toInt() else 0xFF008C92.toInt()
-                else -> if (state.darkMode) 0xFFFFB36B.toInt() else 0xFF9B4A15.toInt()
+                "NightShift" -> if (state.darkMode) 0xFFFFB86B.toInt() else 0xFF334155.toInt()
+                "PayrollGreen" -> if (state.darkMode) 0xFF82D69D.toInt() else 0xFF2F6F4E.toInt()
+                "SteelBlueCollar" -> if (state.darkMode) 0xFF9CB4C0.toInt() else 0xFF465A64.toInt()
+                "MinimalInk" -> if (state.darkMode) 0xFFF5F5F5.toInt() else 0xFF111827.toInt()
+                "SunriseShift", "Sunrise" -> if (state.darkMode) 0xFFFDBA74.toInt() else 0xFFD97706.toInt()
+                "DeliBoard" -> if (state.darkMode) 0xFFFF9B52.toInt() else 0xFFA34716.toInt()
+                "FocusPlum" -> if (state.darkMode) 0xFFD9A7E8.toInt() else 0xFF6D3A7A.toInt()
+                else -> if (state.darkMode) 0xFFF59E5B.toInt() else 0xFFC05621.toInt()
             }
             return if (state.darkMode) {
                 WidgetPalette(
-                    background = 0xFF1C1916.toInt(),
-                    title = 0xFFFFF7EF.toInt(),
-                    body = 0xFFEADFD5.toInt(),
+                    background = 0xFF1E1E1E.toInt(),
+                    title = 0xFFF5F1EA.toInt(),
+                    body = 0xFFC8BFB5.toInt(),
                     accent = accent,
-                    success = 0xFFA7D98B.toInt()
+                    success = 0xFF7ED99A.toInt()
                 )
             } else {
                 WidgetPalette(
-                    background = 0xFFFFFCF8.toInt(),
-                    title = 0xFF241914.toInt(),
-                    body = 0xFF3B302A.toInt(),
+                    background = 0xFFFFFFFF.toInt(),
+                    title = 0xFF1F1F1F.toInt(),
+                    body = 0xFF5F5A54.toInt(),
                     accent = accent,
-                    success = 0xFF4F7D2B.toInt()
+                    success = 0xFF2E7D47.toInt()
                 )
             }
         }

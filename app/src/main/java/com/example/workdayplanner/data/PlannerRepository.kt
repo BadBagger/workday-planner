@@ -153,7 +153,11 @@ class PlannerRepository(context: Context) {
     }
 
     fun setDarkMode(enabled: Boolean) = update { state ->
-        state.copy(darkMode = enabled)
+        state.copy(appearanceMode = if (enabled) AppearanceMode.Dark else AppearanceMode.Light, darkMode = enabled)
+    }
+
+    fun setAppearanceMode(mode: AppearanceMode) = update { state ->
+        state.copy(appearanceMode = mode, darkMode = mode == AppearanceMode.Dark)
     }
 
     fun setAccentStyle(style: AccentStyle) = update { state ->
@@ -225,6 +229,7 @@ class PlannerRepository(context: Context) {
 
     private fun loadState(): AppState {
         val root = prefs.getString("state", null)?.let(::JSONObject) ?: return AppState()
+        val legacyDarkMode = root.optBoolean("darkMode", false)
         return AppState(
             tasks = root.optJSONArray("tasks").toObjects(::taskFromJson),
             notes = root.optJSONArray("notes").toObjects(::noteFromJson),
@@ -234,10 +239,12 @@ class PlannerRepository(context: Context) {
             daysOff = root.optJSONArray("daysOff").toStrings().map(LocalDate::parse).toSet(),
             dayOffTypes = root.optJSONObject("dayOffTypes").toDayOffTypes(),
             defaultDaysOff = root.optJSONArray("defaultDaysOff").toStrings().map(DayOfWeek::valueOf).toSet(),
-            darkMode = root.optBoolean("darkMode", false),
-            accentStyle = runCatching {
-                AccentStyle.valueOf(root.optString("accentStyle", AccentStyle.Classic.name))
-            }.getOrDefault(AccentStyle.Classic),
+            appearanceMode = AppearanceMode.fromStored(
+                if (root.has("appearanceMode") && !root.isNull("appearanceMode")) root.optString("appearanceMode") else null,
+                legacyDarkMode
+            ),
+            darkMode = legacyDarkMode,
+            accentStyle = AccentStyle.fromStored(root.optString("accentStyle", AccentStyle.Default.name)),
             widgetLayoutMode = runCatching {
                 WidgetLayoutMode.valueOf(root.optString("widgetLayoutMode", WidgetLayoutMode.Standard.name))
             }.getOrDefault(WidgetLayoutMode.Standard),
@@ -269,6 +276,7 @@ class PlannerRepository(context: Context) {
                 state.dayOffTypes.forEach { (date, kind) -> put(date.toString(), kind.name) }
             })
             .put("defaultDaysOff", JSONArray(state.defaultDaysOff.map(DayOfWeek::name)))
+            .put("appearanceMode", state.appearanceMode.name)
             .put("darkMode", state.darkMode)
             .put("accentStyle", state.accentStyle.name)
             .put("widgetLayoutMode", state.widgetLayoutMode.name)

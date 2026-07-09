@@ -39,11 +39,41 @@ enum class CarryOverBehavior(val label: String) {
     NextWorkday("Roll to next workday")
 }
 
-enum class AccentStyle(val label: String) {
-    Classic("Smithware"),
-    Emerald("Teal"),
-    Sunrise("Amber"),
-    Logo("Logo")
+enum class AppThemeStyle(val label: String, val premium: Boolean) {
+    Default("Workday Default", false),
+    GraphitePro("Graphite Pro", true),
+    NightShift("Night Shift", true),
+    PayrollGreen("Payroll Green", true),
+    SteelBlueCollar("Steel Blue Collar", true),
+    MinimalInk("Minimal Ink", true),
+    SunriseShift("Sunrise Shift", true),
+    DeliBoard("Deli Board", true),
+    FocusPlum("Focus Plum", true);
+
+    companion object {
+        fun fromStored(value: String): AppThemeStyle {
+            return when (value) {
+                "Classic", "Emerald", "Logo" -> Default
+                "Sunrise" -> SunriseShift
+                else -> runCatching { valueOf(value) }.getOrDefault(Default)
+            }
+        }
+    }
+}
+
+typealias AccentStyle = AppThemeStyle
+
+enum class AppearanceMode(val label: String) {
+    Light("Light"),
+    Dark("Dark"),
+    System("Follow system");
+
+    companion object {
+        fun fromStored(value: String?, legacyDarkMode: Boolean): AppearanceMode {
+            return runCatching { valueOf(value.orEmpty()) }
+                .getOrDefault(if (legacyDarkMode) Dark else Light)
+        }
+    }
 }
 
 enum class TaskCategory(val label: String) {
@@ -280,8 +310,9 @@ data class AppState(
     val daysOff: Set<LocalDate> = emptySet(),
     val dayOffTypes: Map<LocalDate, ShiftTemplateKind> = emptyMap(),
     val defaultDaysOff: Set<DayOfWeek> = setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
+    val appearanceMode: AppearanceMode = AppearanceMode.Light,
     val darkMode: Boolean = false,
-    val accentStyle: AccentStyle = AccentStyle.Classic,
+    val accentStyle: AccentStyle = AccentStyle.Default,
     val widgetLayoutMode: WidgetLayoutMode = WidgetLayoutMode.Standard,
     val selectedCalendarId: Long? = null,
     val paySettings: PaySettings = PaySettings(),
