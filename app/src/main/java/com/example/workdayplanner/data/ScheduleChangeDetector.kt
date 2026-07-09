@@ -1,6 +1,5 @@
 package com.example.workdayplanner.data
 
-import java.time.Duration
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
@@ -83,24 +82,23 @@ object ScheduleChangeDetector {
             .distinct()
             .sorted()
             .mapNotNull { weekStart ->
-                val oldHours = scheduledHours(oldState.shifts, weekStart)
-                val newHours = scheduledHours(newState.shifts, weekStart)
+                val oldHours = estimatedWeekHours(oldState, weekStart)
+                val newHours = estimatedWeekHours(newState, weekStart)
+                val hoursLabel = if (newState.paySettings.deductUnpaidBreaks) "paid hours" else "scheduled hours"
                 when {
-                    oldHours <= 40.0 && newHours > 40.0 -> "Week of ${weekStart}: ${newHours.formatHours()} scheduled hours. Overtime risk."
-                    newHours in 38.0..40.0 -> "Week of ${weekStart}: ${newHours.formatHours()} scheduled hours. Close to overtime."
+                    oldHours <= 40.0 && newHours > 40.0 -> "Week of ${weekStart}: ${newHours.formatHours()} $hoursLabel. Overtime risk."
+                    newHours in 38.0..40.0 -> "Week of ${weekStart}: ${newHours.formatHours()} $hoursLabel. Close to overtime."
                     else -> null
                 }
             }
     }
 
-    private fun scheduledHours(shifts: List<WorkShift>, weekStart: LocalDate): Double {
+    private fun estimatedWeekHours(state: AppState, weekStart: LocalDate): Double {
         val weekEnd = weekStart.plusDays(6)
-        return shifts
+        val shifts = state.shifts
             .filter { !it.date.isBefore(weekStart) && !it.date.isAfter(weekEnd) }
-            .sumOf { shift ->
-                val minutes = Duration.between(shift.start, shift.end).toMinutes()
-                if (minutes < 0) minutes + 24 * 60 else minutes
-            } / 60.0
+        val estimate = PayEstimator.estimate(shifts, state.paySettings)
+        return if (state.paySettings.deductUnpaidBreaks) estimate.paidHours else estimate.scheduledHours
     }
 
     private fun Double.formatHours(): String {

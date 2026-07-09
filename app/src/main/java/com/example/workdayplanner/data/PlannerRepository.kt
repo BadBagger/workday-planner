@@ -399,6 +399,7 @@ class PlannerRepository(context: Context) {
 
     private fun paySettingsToJson(settings: PaySettings) = JSONObject()
         .put("hourlyRate", settings.hourlyRate)
+        .put("deductUnpaidBreaks", settings.deductUnpaidBreaks)
         .put("unpaidLunchMinutes", settings.unpaidLunchMinutes)
         .put("overtimeThresholdHours", settings.overtimeThresholdHours)
         .put("overtimeMultiplier", settings.overtimeMultiplier)
@@ -415,6 +416,7 @@ class PlannerRepository(context: Context) {
 
     private fun paySettingsFromJson(json: JSONObject) = PaySettings(
         hourlyRate = json.optDouble("hourlyRate", 0.0),
+        deductUnpaidBreaks = json.optBoolean("deductUnpaidBreaks", true),
         unpaidLunchMinutes = json.optInt("unpaidLunchMinutes", 30).coerceAtLeast(0),
         overtimeThresholdHours = json.optDouble("overtimeThresholdHours", 40.0).coerceAtLeast(0.0),
         overtimeMultiplier = json.optDouble("overtimeMultiplier", 1.5).coerceAtLeast(1.0),

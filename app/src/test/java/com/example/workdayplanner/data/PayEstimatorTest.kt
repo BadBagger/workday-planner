@@ -23,6 +23,20 @@ class PayEstimatorTest {
     }
 
     @Test
+    fun usesFullShiftLengthWhenBreakDeductionIsOff() {
+        val estimate = PayEstimator.estimate(
+            shifts = listOf(
+                WorkShift(date = LocalDate.of(2026, 7, 6), start = LocalTime.of(9, 0), end = LocalTime.of(17, 0))
+            ),
+            settings = PaySettings(hourlyRate = 20.0, deductUnpaidBreaks = false, unpaidLunchMinutes = 60)
+        )
+
+        assertEquals(8.0, estimate.scheduledHours, 0.01)
+        assertEquals(8.0, estimate.paidHours, 0.01)
+        assertEquals(160.0, estimate.grossPay, 0.01)
+    }
+
+    @Test
     fun appliesOvertimeMultiplierAboveThreshold() {
         val shifts = (0L..4L).map { day ->
             WorkShift(

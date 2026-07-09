@@ -8,6 +8,10 @@ import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
@@ -43,8 +47,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -72,6 +78,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -2035,6 +2042,18 @@ private fun WorkShift.durationLabel(): String {
     }
 }
 
+private fun speechErrorMessage(error: Int): String = when (error) {
+    SpeechRecognizer.ERROR_AUDIO -> "Audio capture failed. Retry or type the note."
+    SpeechRecognizer.ERROR_CLIENT -> "Speech capture was cancelled."
+    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required for voice notes."
+    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech service needs a working recognizer. Try again or type the note."
+    SpeechRecognizer.ERROR_NO_MATCH -> "No clear speech was detected. Retry or type the note."
+    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer is busy. Try again."
+    SpeechRecognizer.ERROR_SERVER -> "Speech service failed. The transcript was not saved; type it instead."
+    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected."
+    else -> "Speech recognition failed with code $error."
+}
+
 private fun WorkShift.timeUntilShift(now: LocalDateTime): String {
     val start = startDateTime()
     return if (now.isBefore(start)) "in ${Duration.between(now, start).toFriendlyDuration()}" else "now"
@@ -2352,9 +2371,93 @@ private fun DailyNotesSection(
     onDeleteNote: (String) -> Unit,
     onCreateTaskFromNote: (String) -> Unit
 ) {
+    val context = LocalContext.current
     var noteText by remember { mutableStateOf("") }
     var selectedKind by remember { mutableStateOf<WorkNoteKind?>(null) }
     var searchText by remember { mutableStateOf("") }
+    var listening by remember { mutableStateOf(false) }
+    var liveVoiceText by remember { mutableStateOf("") }
+    var voiceError by remember { mutableStateOf<String?>(null) }
+    var startVoiceAfterPermission by remember { mutableStateOf(false) }
+    val recognizerAvailable = remember { SpeechRecognizer.isRecognitionAvailable(context) }
+    val speechRecognizer = remember(recognizerAvailable) {
+        if (recognizerAvailable) SpeechRecognizer.createSpeechRecognizer(context) else null
+    }
+    val audioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            startVoiceAfterPermission = true
+        } else {
+            voiceError = "Microphone permission denied. You can still type the note."
+        }
+    }
+
+    fun appendVoiceText(text: String) {
+        if (text.isBlank()) return
+        noteText = listOf(noteText.trim(), text.trim()).filter { it.isNotBlank() }.joinToString(" ")
+    }
+
+    fun startVoiceCapture() {
+        val recognizer = speechRecognizer
+        if (!recognizerAvailable || recognizer == null) {
+            voiceError = "Speech recognition is not available on this device. Type the note instead."
+            return
+        }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        liveVoiceText = ""
+        voiceError = null
+        listening = true
+        recognizer.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak your work note")
+        })
+    }
+
+    DisposableEffect(speechRecognizer) {
+        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                voiceError = null
+            }
+
+            override fun onBeginningOfSpeech() = Unit
+            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onBufferReceived(buffer: ByteArray?) = Unit
+
+            override fun onEndOfSpeech() {
+                listening = false
+            }
+
+            override fun onError(error: Int) {
+                listening = false
+                voiceError = speechErrorMessage(error)
+            }
+
+            override fun onResults(results: Bundle?) {
+                listening = false
+                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                liveVoiceText = text
+                appendVoiceText(text)
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                liveVoiceText = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+            }
+
+            override fun onEvent(eventType: Int, params: Bundle?) = Unit
+        })
+        onDispose { speechRecognizer?.destroy() }
+    }
+
+    LaunchedEffect(startVoiceAfterPermission) {
+        if (startVoiceAfterPermission) {
+            startVoiceAfterPermission = false
+            startVoiceCapture()
+        }
+    }
+
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
@@ -2362,6 +2465,55 @@ private fun DailyNotesSection(
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SectionHeader("Daily work notes", "Smart tags organize notes automatically on this device.")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                if (listening) {
+                    Button(
+                        onClick = {
+                            speechRecognizer?.stopListening()
+                            listening = false
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Stop listening")
+                    }
+                } else {
+                    Button(onClick = { startVoiceCapture() }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Mic, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Voice note")
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        liveVoiceText = ""
+                        voiceError = null
+                    },
+                    enabled = liveVoiceText.isNotBlank() || voiceError != null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Clear voice")
+                }
+            }
+            if (listening || liveVoiceText.isNotBlank() || voiceError != null) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (voiceError == null) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.dangerContainer
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(if (listening) "Listening..." else "Voice capture", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            liveVoiceText.ifBlank { voiceError.orEmpty() },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (voiceError == null) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onDangerContainer
+                        )
+                    }
+                }
+            }
             OutlinedTextField(
                 value = noteText,
                 onValueChange = { noteText = it },
@@ -2375,6 +2527,8 @@ private fun DailyNotesSection(
                 onClick = {
                     onAddNote(noteText)
                     noteText = ""
+                    liveVoiceText = ""
+                    voiceError = null
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -2659,6 +2813,10 @@ private fun TaskDetailScreen(
     var alarmOffsetMinutes by remember(task?.id) { mutableStateOf((task?.alarmOffsetMinutes ?: 30).toString()) }
     var completed by remember(task?.id) { mutableStateOf(task?.completed ?: false) }
     var showAdvancedRepeat by remember(task?.id) { mutableStateOf(task?.repeatRule == RepeatRule.CustomDays) }
+    var showTaskDetails by remember(task?.id) {
+        mutableStateOf(task != null && (task.category != TaskCategory.General || task.priority != TaskPriority.Normal || !task.workRelated))
+    }
+    var showTemplates by remember(task?.id) { mutableStateOf(false) }
     var showMoreRules by remember(task?.id) { mutableStateOf(false) }
     val advancedRulesUnlocked = PremiumAccess.canUse(state, PremiumFeature.AdvancedTaskRules)
     val templatesUnlocked = PremiumAccess.canUse(state, PremiumFeature.TaskTemplates)
@@ -2727,44 +2885,77 @@ private fun TaskDetailScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text(task?.let { "Edit task" } ?: "Add task", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-        TaskTemplateChips(
-            templates = taskTemplatesFor(state),
-            onApply = { template ->
-                if (!templatesUnlocked) {
-                    onOpenPremium()
-                    return@TaskTemplateChips
-                }
-                title = template.title
-                notes = template.notes
-                category = template.category
-                priority = template.priority
-                repeatRule = template.repeatRule
-                repeatDays = emptySet()
-                workRelated = template.workRelated
-                reminderEnabled = template.reminderEnabled
-                linkedShiftType = template.linkedShiftType
-                timingRule = template.timingRule
-                carryOverBehavior = template.carryOverBehavior
-                alarmOffsetMinutes = template.alarmOffsetMinutes.toString()
-            },
-            onSaveTemplate = onSaveTaskTemplate,
-            onDeleteTemplate = onDeleteTaskTemplate,
-            premiumUnlocked = templatesUnlocked,
-            onOpenPremium = onOpenPremium
-        )
         Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Task", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, minLines = 2, modifier = Modifier.fillMaxWidth())
-                TaskCategorySelector(selected = category, onSelected = { category = it })
-                TaskPrioritySelector(selected = priority, onSelected = { priority = it })
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        AssistChip(onClick = {}, label = { Text(category.label) })
+                        AssistChip(onClick = {}, label = { Text(priority.label) })
+                        if (workRelated) AssistChip(onClick = {}, label = { Text("Work") })
+                    }
+                    TextButton(onClick = { showTaskDetails = !showTaskDetails }) {
+                        Text(if (showTaskDetails) "Hide details" else "Details")
+                    }
+                }
+                if (showTaskDetails) {
+                    TaskCategorySelector(selected = category, onSelected = { category = it })
+                    TaskPrioritySelector(selected = priority, onSelected = { priority = it })
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Work-related", style = MaterialTheme.typography.bodyLarge)
+                            Text("Use this for shift planning and work task labels.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = workRelated, onCheckedChange = { workRelated = it })
+                    }
+                }
+            }
+        }
+        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f)) {
-                        Text("Work-related", style = MaterialTheme.typography.bodyLarge)
-                        Text("Use this for shift planning and work task labels.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Templates", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("Optional shortcuts for repeated work tasks.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Switch(checked = workRelated, onCheckedChange = { workRelated = it })
+                    TextButton(onClick = { showTemplates = !showTemplates }) {
+                        Text(if (showTemplates) "Hide" else "Use")
+                    }
+                }
+                if (showTemplates) {
+                    TaskTemplateChips(
+                        templates = taskTemplatesFor(state),
+                        onApply = { template ->
+                            if (!templatesUnlocked) {
+                                onOpenPremium()
+                                return@TaskTemplateChips
+                            }
+                            title = template.title
+                            notes = template.notes
+                            category = template.category
+                            priority = template.priority
+                            repeatRule = template.repeatRule
+                            repeatDays = emptySet()
+                            workRelated = template.workRelated
+                            reminderEnabled = template.reminderEnabled
+                            linkedShiftType = template.linkedShiftType
+                            timingRule = template.timingRule
+                            carryOverBehavior = template.carryOverBehavior
+                            alarmOffsetMinutes = template.alarmOffsetMinutes.toString()
+                            showTaskDetails = template.category != TaskCategory.General || template.priority != TaskPriority.Normal || !template.workRelated
+                            showTemplates = false
+                        },
+                        onSaveTemplate = onSaveTaskTemplate,
+                        onDeleteTemplate = onDeleteTaskTemplate,
+                        premiumUnlocked = templatesUnlocked,
+                        onOpenPremium = onOpenPremium
+                    )
                 }
             }
         }
@@ -3622,6 +3813,7 @@ private fun PayEstimateSection(
     val settings = state.paySettings
     val unlocked = PremiumAccess.canUse(state, PremiumFeature.PayEstimator)
     var hourlyRate by remember(settings.hourlyRate) { mutableStateOf(settings.hourlyRate.takeIf { it > 0.0 }?.toString() ?: "") }
+    var deductUnpaidBreaks by remember(settings.deductUnpaidBreaks) { mutableStateOf(settings.deductUnpaidBreaks) }
     var lunchMinutes by remember(settings.unpaidLunchMinutes) { mutableStateOf(settings.unpaidLunchMinutes.toString()) }
     var overtimeThreshold by remember(settings.overtimeThresholdHours) { mutableStateOf(settings.overtimeThresholdHours.toSimpleString()) }
     var overtimeMultiplier by remember(settings.overtimeMultiplier) { mutableStateOf(settings.overtimeMultiplier.toSimpleString()) }
@@ -3660,21 +3852,53 @@ private fun PayEstimateSection(
                 }
                 Switch(checked = showPayOnDashboard, onCheckedChange = { showPayOnDashboard = it })
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = hourlyRate,
-                    onValueChange = { hourlyRate = it },
-                    label = { Text("Hourly rate") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedTextField(
-                    value = lunchMinutes,
-                    onValueChange = { lunchMinutes = it },
-                    label = { Text("Lunch min") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
+            OutlinedTextField(
+                value = hourlyRate,
+                onValueChange = { hourlyRate = it },
+                label = { Text("Hourly rate") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Account for unpaid breaks?", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                if (deductUnpaidBreaks) {
+                                    "Pay and hours estimates subtract ${lunchMinutes.toIntOrNull()?.coerceAtLeast(0) ?: 0} minutes from each shift."
+                                } else {
+                                    "Estimates use full shift length without subtracting break time."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(checked = deductUnpaidBreaks, onCheckedChange = { deductUnpaidBreaks = it })
+                    }
+                    if (deductUnpaidBreaks) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(0, 15, 30, 45, 60).forEach { minutes ->
+                                FilterChip(
+                                    selected = lunchMinutes.toIntOrNull() == minutes,
+                                    onClick = { lunchMinutes = minutes.toString() },
+                                    label = { Text(if (minutes == 0) "No break" else "${minutes} min") }
+                                )
+                            }
+                        }
+                        OutlinedTextField(
+                            value = lunchMinutes,
+                            onValueChange = { lunchMinutes = it },
+                            label = { Text("Break minutes per shift") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedTextField(
@@ -3722,6 +3946,7 @@ private fun PayEstimateSection(
                     onPaySettingsChanged(
                         PaySettings(
                             hourlyRate = hourlyRate.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+                            deductUnpaidBreaks = deductUnpaidBreaks,
                             unpaidLunchMinutes = lunchMinutes.toIntOrNull()?.coerceAtLeast(0) ?: 0,
                             overtimeThresholdHours = overtimeThreshold.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 40.0,
                             overtimeMultiplier = overtimeMultiplier.toDoubleOrNull()?.coerceAtLeast(1.0) ?: 1.5,
@@ -4124,9 +4349,11 @@ private fun ScheduleOverviewCard(state: AppState) {
         .minWithOrNull(compareBy<WorkShift> { it.date }.thenBy { it.start })
     val currentWeekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     val currentWeekEnd = currentWeekStart.plusDays(6)
-    val weekHours = state.shifts
+    val weekShifts = state.shifts
         .filter { !it.date.isBefore(currentWeekStart) && !it.date.isAfter(currentWeekEnd) }
-        .sumOf { it.durationMinutes() } / 60.0
+    val weekEstimate = PayEstimator.estimate(weekShifts, state.paySettings)
+    val weekHours = if (state.paySettings.deductUnpaidBreaks) weekEstimate.paidHours else weekEstimate.scheduledHours
+    val weekHoursLabel = if (state.paySettings.deductUnpaidBreaks) "paid hrs this week" else "scheduled hrs this week"
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -4151,7 +4378,7 @@ private fun ScheduleOverviewCard(state: AppState) {
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AssistChip(onClick = {}, label = { Text("${state.shifts.count { !it.date.isBefore(today) }} upcoming shifts") })
-                AssistChip(onClick = {}, label = { Text("${weekHours.toSimpleString()} hrs this week") })
+                AssistChip(onClick = {}, label = { Text("${weekHours.toSimpleString()} $weekHoursLabel") })
                 AssistChip(onClick = {}, label = { Text("${state.daysOff.count { !it.isBefore(today) }} upcoming days off") })
             }
         }

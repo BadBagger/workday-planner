@@ -42,7 +42,8 @@ object PayEstimator {
     fun estimate(shifts: List<WorkShift>, settings: PaySettings): PayEstimate {
         val shiftRows = shifts.map { shift ->
             val scheduled = shiftHours(shift)
-            val paid = (scheduled - settings.unpaidLunchMinutes / 60.0).coerceAtLeast(0.0)
+            val breakHours = if (settings.deductUnpaidBreaks) settings.unpaidLunchMinutes / 60.0 else 0.0
+            val paid = (scheduled - breakHours).coerceAtLeast(0.0)
             val dailyOvertime = if (settings.dailyOvertimeThresholdHours > 0.0) {
                 (paid - settings.dailyOvertimeThresholdHours).coerceAtLeast(0.0)
             } else {
