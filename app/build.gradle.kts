@@ -20,8 +20,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 53
-        versionName = "2.33-import-onboarding-crash-fix"
+        versionCode = 54
+        versionName = "2.34-launcher-icon-fix"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
