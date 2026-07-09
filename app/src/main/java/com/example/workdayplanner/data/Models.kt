@@ -290,5 +290,6 @@ data class AppState(
     val shiftTemplates: List<ShiftTemplate> = emptyList(),
     val taskTemplates: List<TaskTemplate> = emptyList(),
     val shiftPatterns: List<ShiftPattern> = emptyList(),
-    val premium: PremiumEntitlement = PremiumEntitlement()
+    val premium: PremiumEntitlement = PremiumEntitlement(),
+    val onboardingCompleted: Boolean = false
 )

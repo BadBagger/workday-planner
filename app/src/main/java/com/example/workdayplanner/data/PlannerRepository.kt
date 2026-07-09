@@ -176,6 +176,10 @@ class PlannerRepository(context: Context) {
         state.copy(premium = state.premium.copy(mockPremiumEnabled = enabled, isPremium = false))
     }
 
+    fun completeOnboarding() = update { state ->
+        state.copy(onboardingCompleted = true)
+    }
+
     fun recordScreenshotImport(month: String = java.time.YearMonth.now().toString()) = update { state ->
         val currentCount = if (state.premium.importMonth == month) state.premium.screenshotImportsThisMonth else 0
         state.copy(
@@ -248,7 +252,8 @@ class PlannerRepository(context: Context) {
             shiftTemplates = root.optJSONArray("shiftTemplates").toObjects(::shiftTemplateFromJson),
             taskTemplates = root.optJSONArray("taskTemplates").toObjects(::taskTemplateFromJson),
             shiftPatterns = root.optJSONArray("shiftPatterns").toObjects(::shiftPatternFromJson),
-            premium = root.optJSONObject("premium")?.let(::premiumFromJson) ?: PremiumEntitlement()
+            premium = root.optJSONObject("premium")?.let(::premiumFromJson) ?: PremiumEntitlement(),
+            onboardingCompleted = root.optBoolean("onboardingCompleted", false)
         )
     }
 
@@ -275,6 +280,7 @@ class PlannerRepository(context: Context) {
             .put("taskTemplates", JSONArray(state.taskTemplates.map(::taskTemplateToJson)))
             .put("shiftPatterns", JSONArray(state.shiftPatterns.map(::shiftPatternToJson)))
             .put("premium", premiumToJson(state.premium))
+            .put("onboardingCompleted", state.onboardingCompleted)
         prefs.edit().putString("state", root.toString()).apply()
     }
 

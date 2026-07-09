@@ -190,6 +190,7 @@ fun PlannerApp(
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
     val topLevel = listOf(Screen.Tasks, Screen.Notes, Screen.Schedule, Screen.Manager, Screen.Settings)
     var showPremiumScreen by remember { mutableStateOf(false) }
+    val showIntro = !state.onboardingCompleted && !state.hasPlannerData()
 
     LaunchedEffect(requestedTaskId, state.tasks) {
         val taskId = requestedTaskId?.takeIf { id -> state.tasks.any { it.id == id } } ?: return@LaunchedEffect
@@ -203,6 +204,7 @@ fun PlannerApp(
         topBar = {
             AppTopBar(
                 title = when {
+                    showIntro -> "Workday Planner"
                     currentRoute.startsWith(Screen.TaskDetail.route) -> "Task"
                     currentRoute.startsWith(Screen.EventDetail.route) -> "Event"
                     currentRoute == Screen.Manager.route -> "Manager"
@@ -217,25 +219,27 @@ fun PlannerApp(
             )
         },
         bottomBar = {
-            NavigationBar {
-                topLevel.forEach { screen ->
-                    NavigationBarItem(
-                        selected = currentRoute == screen.route,
-                        onClick = {
-                            navController.navigate(screen.route) {
-                                popUpTo(Screen.Tasks.route)
-                                launchSingleTop = true
-                            }
-                        },
-                        icon = { Icon(screen.icon, contentDescription = screen.label) },
-                        label = { Text(screen.label, maxLines = 1) },
-                        alwaysShowLabel = true
-                    )
+            if (!showIntro) {
+                NavigationBar {
+                    topLevel.forEach { screen ->
+                        NavigationBarItem(
+                            selected = currentRoute == screen.route,
+                            onClick = {
+                                navController.navigate(screen.route) {
+                                    popUpTo(Screen.Tasks.route)
+                                    launchSingleTop = true
+                                }
+                            },
+                            icon = { Icon(screen.icon, contentDescription = screen.label) },
+                            label = { Text(screen.label, maxLines = 1) },
+                            alwaysShowLabel = true
+                        )
+                    }
                 }
             }
         },
         floatingActionButton = {
-            if (currentRoute == Screen.Tasks.route) {
+            if (!showIntro && currentRoute == Screen.Tasks.route) {
                 ExtendedFloatingActionButton(
                     onClick = { navController.navigate("${Screen.TaskDetail.route}/new") },
                     icon = { Icon(Icons.Default.Add, contentDescription = null) },
@@ -244,11 +248,21 @@ fun PlannerApp(
             }
         }
     ) { padding ->
-        NavHost(
-            navController = navController,
-            startDestination = Screen.Tasks.route,
-            modifier = Modifier.padding(padding)
-        ) {
+        if (showIntro) {
+            WorkdayIntroScreen(
+                modifier = Modifier.padding(padding),
+                onImportSchedule = {
+                    viewModel.completeOnboarding()
+                    navController.navigate(Screen.Import.route) { launchSingleTop = true }
+                },
+                onStart = viewModel::completeOnboarding
+            )
+        } else {
+            NavHost(
+                navController = navController,
+                startDestination = Screen.Tasks.route,
+                modifier = Modifier.padding(padding)
+            ) {
             composable(Screen.Tasks.route) {
                 TaskListScreen(
                     state = state,
@@ -394,8 +408,101 @@ fun PlannerApp(
                 )
             }
         }
+        }
     }
 }
+
+private fun AppState.hasPlannerData(): Boolean {
+    return tasks.isNotEmpty() ||
+        notes.isNotEmpty() ||
+        images.isNotEmpty() ||
+        events.isNotEmpty() ||
+        shifts.isNotEmpty() ||
+        daysOff.isNotEmpty() ||
+        trainingItems.isNotEmpty() ||
+        timecards.isNotEmpty()
+}
+
+@Composable
+private fun WorkdayIntroScreen(
+    modifier: Modifier = Modifier,
+    onImportSchedule: () -> Unit,
+    onStart: () -> Unit
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxSize().padding(screenPadding),
+        verticalArrangement = Arrangement.spacedBy(sectionGap)
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Your workday command center",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "Track shifts, tasks, reminders, days off, training, and estimated hours without an account or cloud upload.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        item {
+            IntroFeatureCard(
+                icon = Icons.Default.CalendarMonth,
+                title = "Start with your schedule",
+                body = "Import a schedule screenshot, review what OCR found, then save only the shifts you confirm."
+            )
+        }
+        item {
+            IntroFeatureCard(
+                icon = Icons.Default.CheckCircle,
+                title = "Plan around shifts",
+                body = "Tasks can sit before work, after work, on workdays only, or skip marked days off."
+            )
+        }
+        item {
+            IntroFeatureCard(
+                icon = Icons.Default.Settings,
+                title = "Keep it local",
+                body = "Your schedule, notes, photos, pay estimates, and training tracker stay on this device."
+            )
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
+                Button(onClick = onImportSchedule, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.FileUpload, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Import my schedule")
+                }
+                OutlinedButton(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
+                    Text("Start from dashboard")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IntroFeatureCard(icon: ImageVector, title: String, body: String) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppTopBar(title: String) {
@@ -3554,7 +3661,11 @@ private fun ScheduleScreen(
     var scheduleMessage by remember { mutableStateOf<String?>(null) }
 
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(screenPadding)
+            .padding(bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         ScheduleOverviewCard(state = state)
@@ -4475,7 +4586,7 @@ private fun ImportScreen(
                 PremiumLockedInline(PremiumFeature.UnlimitedImports, "Manual shifts stay free. Premium unlocks unlimited screenshot imports.", onOpenPremium)
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = { imagePicker.launch("image/*") }, enabled = !isReading && canImport) {
                 Icon(Icons.Default.FileUpload, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -4492,17 +4603,26 @@ private fun ImportScreen(
             ) {
                 Text("Take photo")
             }
-            OutlinedButton(onClick = onPreview, enabled = rawText.isNotBlank()) { Text("Build preview") }
         }
         ImportStepHeader("2", "Run on-device OCR", "Workday Planner reads the screenshot locally and does not upload images.")
         ImportStepHeader("3", "Review recognized text", "You can edit the OCR text before building the preview.")
+        Button(
+            onClick = onPreview,
+            enabled = rawText.isNotBlank() && !isReading,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (parsed == null) "Build preview from text" else "Refresh preview from edits")
+        }
         OutlinedTextField(
             value = rawText,
             onValueChange = onTextChange,
             label = { Text("Recognized schedule text") },
             minLines = 8,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth().height(230.dp)
         )
+        OutlinedButton(onClick = onPreview, enabled = rawText.isNotBlank() && !isReading, modifier = Modifier.fillMaxWidth()) {
+            Text(if (parsed == null) "Review detected shifts" else "Refresh detected shifts")
+        }
         if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
         guidance?.let { ScheduleImportGuidanceCard(it) }
         if (message != null) Text(message, color = MaterialTheme.colorScheme.secondary)
@@ -4552,7 +4672,7 @@ private fun ImportScreen(
                         enabled = corrected.shifts.isNotEmpty() || corrected.daysOff.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Save all confirmed shifts")
+                        Text("Accept and save confirmed shifts")
                     }
                     TextButton(onClick = onStartOver, modifier = Modifier.fillMaxWidth()) {
                         Text("Start over")

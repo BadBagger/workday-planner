@@ -20,8 +20,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 51
-        versionName = "2.31-command-center-stability"
+        versionCode = 52
+        versionName = "2.32-import-submit-action"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -379,6 +379,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         repository.setMockPremium(enabled)
     }
 
+    fun completeOnboarding() {
+        repository.completeOnboarding()
+    }
+
     fun clockIn() {
         updateTodayTimecard { entry, now -> entry.copy(clockIn = entry.clockIn ?: now) }
     }
