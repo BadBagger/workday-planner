@@ -190,6 +190,7 @@ fun PlannerApp(
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
     val topLevel = listOf(Screen.Tasks, Screen.Notes, Screen.Schedule, Screen.Manager, Screen.Settings)
     var showPremiumScreen by remember { mutableStateOf(false) }
+    var openImportAfterIntro by remember { mutableStateOf(false) }
     val showIntro = !state.onboardingCompleted && !state.hasPlannerData()
 
     LaunchedEffect(requestedTaskId, state.tasks) {
@@ -198,6 +199,15 @@ fun PlannerApp(
             launchSingleTop = true
         }
         onTaskRequestHandled()
+    }
+
+    LaunchedEffect(showIntro, openImportAfterIntro) {
+        if (!showIntro && openImportAfterIntro) {
+            openImportAfterIntro = false
+            navController.navigate(Screen.Import.route) {
+                launchSingleTop = true
+            }
+        }
     }
 
     Scaffold(
@@ -252,8 +262,8 @@ fun PlannerApp(
             WorkdayIntroScreen(
                 modifier = Modifier.padding(padding),
                 onImportSchedule = {
+                    openImportAfterIntro = true
                     viewModel.completeOnboarding()
-                    navController.navigate(Screen.Import.route) { launchSingleTop = true }
                 },
                 onStart = viewModel::completeOnboarding
             )
