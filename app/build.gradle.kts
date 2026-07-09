@@ -20,8 +20,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 54
-        versionName = "2.34-launcher-icon-fix"
+        versionCode = 55
+        versionName = "2.35-transparent-launcher-icon"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
