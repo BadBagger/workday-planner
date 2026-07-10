@@ -2994,7 +2994,8 @@ private fun TaskDetailScreen(
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f)) {
                         Text("Reminder", style = MaterialTheme.typography.bodyLarge)
-                        Text("Workday Planner uses reminders only for tasks you create.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Task reminders use a full alarm screen with sound and vibration.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Workday Planner only alarms for tasks you create.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("You can turn reminders off anytime.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = reminderEnabled, onCheckedChange = { reminderEnabled = it })

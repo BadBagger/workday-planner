@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.example.workdayplanner.MainActivity
@@ -38,12 +39,27 @@ class TaskAlarmReceiver : BroadcastReceiver() {
             contentIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val fullScreenIntent = Intent(context, TaskAlarmActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .putExtra(EXTRA_TASK_ID, taskId)
+            .putExtra(EXTRA_TASK_TITLE, title)
+        val pendingFullScreenIntent = PendingIntent.getActivity(
+            context,
+            taskId.hashCode() xor FULL_SCREEN_REQUEST_MASK,
+            fullScreenIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val notification = NotificationCompat.Builder(context, NotificationHelper.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
-            .setContentText("This task needs your attention.")
+            .setContentText("Full alarm: this task needs your attention.")
             .setContentIntent(pendingContentIntent)
+            .setFullScreenIntent(pendingFullScreenIntent, true)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setSound(Settings.System.DEFAULT_ALARM_ALERT_URI)
+            .setVibrate(longArrayOf(0, 700, 350, 700, 350, 1200))
             .setAutoCancel(true)
             .build()
 
@@ -65,5 +81,6 @@ class TaskAlarmReceiver : BroadcastReceiver() {
     companion object {
         const val EXTRA_TASK_ID = "task_id"
         const val EXTRA_TASK_TITLE = "task_title"
+        private const val FULL_SCREEN_REQUEST_MASK = 0x51F7
     }
 }

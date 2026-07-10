@@ -20,8 +20,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 57
-        versionName = "2.37-voice-notes-breaks-task-entry"
+        versionCode = 58
+        versionName = "2.38-full-task-alarms"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
