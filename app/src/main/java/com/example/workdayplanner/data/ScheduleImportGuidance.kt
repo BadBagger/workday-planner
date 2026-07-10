@@ -6,9 +6,14 @@ enum class ScheduleImportIssue(
     val tips: List<String>
 ) {
     NoTextDetected(
-        title = "No text detected",
+        title = "No schedule found",
         body = "This screenshot was hard to read.",
         tips = listOf("Try cropping closer to the schedule.", "Make sure dates and shift times are visible.")
+    ),
+    OcrFailed(
+        title = "OCR failed",
+        body = "Workday Planner could not read that image.",
+        tips = listOf("Try choosing the screenshot again.", "Make sure the image is not blurry or too dark.")
     ),
     ImageTooBlurry(
         title = "Image too blurry",
@@ -16,17 +21,17 @@ enum class ScheduleImportIssue(
         tips = listOf("Try cropping closer to the schedule.", "Make sure dates and shift times are visible.")
     ),
     ScheduleFormatUnclear(
-        title = "Schedule format unclear",
+        title = "No schedule found",
         body = "The app found text, but it could not confidently turn it into shifts yet.",
         tips = listOf("Try cropping closer to the schedule.", "Review before saving.")
     ),
     DatesDetectedTimesMissing(
-        title = "Dates detected, times missing",
+        title = "Times unclear",
         body = "The app can see dates, but shift start and end times are not clear.",
         tips = listOf("Make sure dates and shift times are visible.", "Review before saving.")
     ),
     TimesDetectedDatesMissing(
-        title = "Times detected, dates missing",
+        title = "Date missing",
         body = "The app can see shift times, but the matching dates are not clear.",
         tips = listOf("Make sure dates and shift times are visible.", "Try cropping closer to the schedule.")
     ),

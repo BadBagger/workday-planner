@@ -13,7 +13,8 @@ object TaskRecurrence {
             id = java.util.UUID.randomUUID().toString(),
             completed = false,
             deadline = adjustedDeadline,
-            alarmAt = alarmOffset?.let { adjustedDeadline.plus(it) }
+            alarmAt = alarmOffset?.let { adjustedDeadline.plus(it) },
+            completionHistory = task.completionHistory
         )
     }
 
@@ -30,6 +31,7 @@ object TaskRecurrence {
         RepeatRule.OpeningShifts -> nextShiftDateTime(deadline, state, LinkedShiftType.Opening, task.timingRule, task.alarmOffsetMinutes)
         RepeatRule.ClosingShifts -> nextShiftDateTime(deadline, state, LinkedShiftType.Closing, task.timingRule, task.alarmOffsetMinutes)
         RepeatRule.TruckDays -> nextShiftDateTime(deadline, state, LinkedShiftType.Truck, task.timingRule, task.alarmOffsetMinutes)
+        RepeatRule.InventoryDays -> nextShiftDateTime(deadline, state, LinkedShiftType.Inventory, task.timingRule, task.alarmOffsetMinutes)
         RepeatRule.CustomDays -> {
             if (task.repeatDays.isEmpty()) {
                 null
@@ -64,8 +66,12 @@ object TaskRecurrence {
         val end = LocalDateTime.of(shift.date, shift.end).let { if (shift.end.isBefore(shift.start)) it.plusDays(1) else it }
         return when (timingRule) {
             TaskTimingRule.BeforeNextShift, TaskTimingRule.AtTime, TaskTimingRule.WorkdaysOnly -> start.minusMinutes(offsetMinutes)
-            TaskTimingRule.DuringShift -> start.plusMinutes(30)
-            TaskTimingRule.AfterShift -> end.plusMinutes(offsetMinutes)
+            TaskTimingRule.AfterShiftStarts -> start.plusMinutes(offsetMinutes)
+            TaskTimingRule.BeforeShiftEnds -> end.minusMinutes(offsetMinutes)
+            TaskTimingRule.AfterShiftEnds -> end.plusMinutes(offsetMinutes)
+            TaskTimingRule.MorningOfWorkday -> start.withHour(8).withMinute(0)
+            TaskTimingRule.NightBeforeShift -> start.minusDays(1).withHour(20).withMinute(0)
+            TaskTimingRule.DaysOffOnly -> start
         }
     }
 

@@ -95,7 +95,8 @@ object TaskScheduleClassifier {
             RepeatRule.EveryWorkday -> TaskRecurrence.nextOccurrence(task, AppState(defaultDaysOff = emptySet()))?.deadline?.toLocalDate()
             RepeatRule.OpeningShifts,
             RepeatRule.ClosingShifts,
-            RepeatRule.TruckDays -> null
+            RepeatRule.TruckDays,
+            RepeatRule.InventoryDays -> null
             RepeatRule.CustomDays -> {
                 if (task.repeatDays.isEmpty()) null else {
                     var next = deadline.plusDays(1)

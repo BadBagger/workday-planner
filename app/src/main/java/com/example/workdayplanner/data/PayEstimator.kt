@@ -25,6 +25,13 @@ object PayEstimator {
         return estimate(shifts, state.paySettings)
     }
 
+    fun estimateActualWeek(state: AppState, dateInWeek: LocalDate = LocalDate.now()): PayEstimate {
+        val weekStart = dateInWeek.with(TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        val weekEnd = weekStart.plusDays(6)
+        val entries = state.timecards.filter { !it.date.isBefore(weekStart) && !it.date.isAfter(weekEnd) }
+        return estimateTimecards(entries, state.paySettings)
+    }
+
     fun estimateDay(state: AppState, date: LocalDate = LocalDate.now()): PayEstimate {
         return estimate(state.shifts.filter { it.date == date }, state.paySettings)
     }
@@ -36,6 +43,16 @@ object PayEstimator {
             .groupBy { it.date.with(TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)) }
             .values
             .map { estimate(it, state.paySettings) }
+            .combine(state.paySettings)
+    }
+
+    fun estimateActualPayPeriod(state: AppState, dateInPeriod: LocalDate = LocalDate.now()): PayEstimate {
+        val (start, end) = payPeriodRange(state.paySettings, dateInPeriod)
+        val entries = state.timecards.filter { !it.date.isBefore(start) && !it.date.isAfter(end) }
+        return entries
+            .groupBy { it.date.with(TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)) }
+            .values
+            .map { estimateTimecards(it, state.paySettings) }
             .combine(state.paySettings)
     }
 
@@ -77,6 +94,37 @@ object PayEstimator {
         val minutes = Duration.between(shift.start, shift.end).toMinutes()
         val adjusted = if (minutes < 0) minutes + 24 * 60 else minutes
         return adjusted / 60.0
+    }
+
+    private fun estimateTimecards(entries: List<TimecardEntry>, settings: PaySettings): PayEstimate {
+        val rows = entries.map { entry ->
+            val summary = TimecardCalculator.summarize(entry, settings)
+            val pseudoShift = WorkShift(
+                date = entry.date,
+                start = entry.clockIn?.toLocalTime() ?: java.time.LocalTime.MIDNIGHT,
+                end = entry.clockOut?.toLocalTime() ?: entry.clockIn?.toLocalTime() ?: java.time.LocalTime.MIDNIGHT,
+                label = entry.note
+            )
+            TimecardPayRow(entry, summary.workedHours, summary.paidHours, pseudoShift)
+        }
+        val workedHours = rows.sumOf { it.workedHours }
+        val paidHours = rows.sumOf { it.paidHours }
+        val overtimeHours = (paidHours - settings.overtimeThresholdHours).coerceAtLeast(0.0)
+        val regularHours = (paidHours - overtimeHours).coerceAtLeast(0.0)
+        val regularPay = regularHours * settings.hourlyRate
+        val overtimePay = overtimeHours * settings.hourlyRate * settings.overtimeMultiplier
+        val differentialPay = rows.sumOf { row -> row.paidHours * differentialFor(row.shift, settings) }
+        return PayEstimate(
+            scheduledHours = workedHours,
+            paidHours = paidHours,
+            regularHours = regularHours,
+            overtimeHours = overtimeHours,
+            regularPay = regularPay,
+            overtimePay = overtimePay,
+            differentialPay = differentialPay,
+            grossPay = regularPay + overtimePay + differentialPay,
+            hoursUntilOvertime = (settings.overtimeThresholdHours - paidHours).coerceAtLeast(0.0)
+        )
     }
 
     private fun differentialFor(shift: WorkShift, settings: PaySettings): Double {
@@ -121,6 +169,13 @@ object PayEstimator {
         val scheduledHours: Double,
         val paidHours: Double,
         val dailyOvertimeHours: Double
+    )
+
+    private data class TimecardPayRow(
+        val entry: TimecardEntry,
+        val workedHours: Double,
+        val paidHours: Double,
+        val shift: WorkShift
     )
 
     private fun List<PayEstimate>.combine(settings: PaySettings): PayEstimate {

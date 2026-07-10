@@ -41,4 +41,25 @@ class TimecardCalculatorTest {
         assertEquals(3.0, summary.paidHours, 0.01)
         assertEquals(30.0, summary.grossPay, 0.01)
     }
+
+    @Test
+    fun weeklySummaryEstimatesOvertime() {
+        val entries = (6..10).map { day ->
+            TimecardEntry(
+                date = LocalDate.of(2026, 7, day),
+                clockIn = LocalDateTime.of(2026, 7, day, 8, 0),
+                clockOut = LocalDateTime.of(2026, 7, day, 17, 0)
+            )
+        }
+        val state = AppState(
+            timecards = entries,
+            paySettings = PaySettings(hourlyRate = 20.0, unpaidLunchMinutes = 0, overtimeThresholdHours = 40.0)
+        )
+
+        val summary = TimecardCalculator.summarizeWeek(state, LocalDate.of(2026, 7, 8))
+
+        assertEquals(45.0, summary.paidHours, 0.01)
+        assertEquals(5.0, summary.overtimeHours, 0.01)
+        assertEquals(950.0, summary.grossPay, 0.01)
+    }
 }

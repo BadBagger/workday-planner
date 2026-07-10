@@ -1,0 +1,205 @@
+package com.example.workdayplanner.data
+
+import java.util.Locale
+
+data class WorkVoiceCaptureResult(
+    val title: String,
+    val cleanedText: String,
+    val kind: WorkNoteKind,
+    val tags: List<String> = emptyList()
+)
+
+object WorkVoiceCaptureParser {
+    fun format(rawTranscript: String, type: WorkVoiceCaptureType): WorkVoiceCaptureResult {
+        val cleaned = rawTranscript.trim()
+        if (cleaned.isBlank()) {
+            return WorkVoiceCaptureResult(
+                title = type.label,
+                cleanedText = "",
+                kind = type.noteKind
+            )
+        }
+
+        return when (type) {
+            WorkVoiceCaptureType.OrderList -> formatOrderList(cleaned)
+            WorkVoiceCaptureType.TaskList -> formatTaskList(cleaned)
+            WorkVoiceCaptureType.Reminder -> formatReminder(cleaned)
+            WorkVoiceCaptureType.ManagerHandoff -> formatSimple(cleaned, "Manager Handoff", type.noteKind)
+            WorkVoiceCaptureType.TruckNote -> formatSimple(cleaned, "Truck Note", type.noteKind)
+            WorkVoiceCaptureType.InventoryNote -> formatSimple(cleaned, "Inventory Note", type.noteKind)
+            WorkVoiceCaptureType.ShiftNote -> formatSimple(cleaned, "Shift Note", type.noteKind)
+        }
+    }
+
+    private fun formatOrderList(raw: String): WorkVoiceCaptureResult {
+        val lines = splitItems(raw)
+            .mapNotNull(::formatOrderItem)
+        val text = lines.ifEmpty { listOf("- ${raw.toSentenceCase()}") }.joinToString("\n")
+        return WorkVoiceCaptureResult(
+            title = "Order List",
+            cleanedText = text,
+            kind = WorkNoteKind.OrderNote,
+            tags = listOf("Order", "Voice")
+        )
+    }
+
+    private fun formatOrderItem(item: String): String? {
+        val trimmed = item.trim().trimEnd('.')
+        if (trimmed.isBlank()) return null
+        val lower = trimmed.lowercase(Locale.US)
+        if (lower.startsWith("check ")) {
+            return "- Check ${trimmed.drop(6).toSentenceCase()} inventory"
+        }
+
+        val quantity = spokenQuantities.firstNotNullOfOrNull { (phrase, value) ->
+            if (lower.contains(" $phrase ") || lower.endsWith(" $phrase")) value else null
+        } ?: Regex("""\b(\d+(?:\.\d+)?)\b""").find(trimmed)?.groupValues?.getOrNull(1)
+
+        val unit = when {
+            lower.contains("gallon") || lower.contains(" gal") -> "gal"
+            lower.contains("case") -> "case"
+            lower.contains("box") -> "box"
+            else -> ""
+        }
+        val product = removeQuantityAndUnit(trimmed)
+        return if (quantity != null && unit.isNotBlank()) {
+            "- ${product.toProductCase()} - $quantity $unit"
+        } else if (quantity != null) {
+            "- ${product.toProductCase()} - $quantity"
+        } else {
+            "- ${trimmed.toSentenceCase()}"
+        }
+    }
+
+    private fun formatTaskList(raw: String): WorkVoiceCaptureResult {
+        val lower = raw.lowercase(Locale.US)
+        val title = when {
+            lower.startsWith("closing task") || lower.startsWith("closing tasks") -> "Closing Tasks"
+            lower.startsWith("opening task") || lower.startsWith("opening tasks") -> "Opening Tasks"
+            lower.startsWith("truck task") || lower.startsWith("truck tasks") -> "Truck Tasks"
+            lower.startsWith("inventory task") || lower.startsWith("inventory tasks") -> "Inventory Tasks"
+            else -> "Task List"
+        }
+        val withoutLead = raw
+            .replace(Regex("""(?i)^(closing|opening|truck|inventory)\s+tasks?\s*"""), "")
+            .trim()
+        val taskItems = mutableListOf<String>()
+        val reminders = mutableListOf<String>()
+        splitItems(withoutLead).forEach { item ->
+            val normalized = item.trim().trimEnd('.')
+            if (normalized.isBlank()) return@forEach
+            val reminder = normalized.replace(Regex("""(?i)^remind me to\s+"""), "")
+            if (reminder != normalized) {
+                reminders += "- ${reminder.toSentenceCase()}"
+            } else {
+                taskItems += "- ${normalized.toTaskCase()}"
+            }
+        }
+        val blocks = buildList {
+            add(title)
+            addAll(taskItems.ifEmpty { listOf("- ${withoutLead.toTaskCase()}") })
+            if (reminders.isNotEmpty()) {
+                add("")
+                add("Reminder:")
+                addAll(reminders)
+            }
+        }
+        return WorkVoiceCaptureResult(
+            title = title,
+            cleanedText = blocks.joinToString("\n"),
+            kind = WorkNoteKind.ShiftNote,
+            tags = listOf("Tasks", "Voice")
+        )
+    }
+
+    private fun formatReminder(raw: String): WorkVoiceCaptureResult {
+        val reminder = raw.replace(Regex("""(?i)^remind me to\s+"""), "").trim()
+        return WorkVoiceCaptureResult(
+            title = "Reminder",
+            cleanedText = "- ${reminder.toSentenceCase()}",
+            kind = WorkNoteKind.ReminderNote,
+            tags = listOf("Reminder", "Voice")
+        )
+    }
+
+    private fun formatSimple(raw: String, title: String, kind: WorkNoteKind): WorkVoiceCaptureResult {
+        val text = splitItems(raw).joinToString("\n") { "- ${it.toTaskCase()}" }
+        return WorkVoiceCaptureResult(
+            title = title,
+            cleanedText = text,
+            kind = kind,
+            tags = listOf(kind.label, "Voice")
+        )
+    }
+
+    private fun splitItems(raw: String): List<String> =
+        raw.replace(Regex("""(?i)\bthen\b"""), ",")
+            .split(',', ';')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+    private fun removeQuantityAndUnit(value: String): String {
+        var cleaned = value
+        spokenQuantities.keys.sortedByDescending { it.length }.forEach { phrase ->
+            cleaned = cleaned.replace(Regex("""(?i)\b${Regex.escape(phrase)}\b"""), "")
+        }
+        cleaned = cleaned
+            .replace(Regex("""(?i)\b\d+(?:\.\d+)?\b"""), "")
+            .replace(Regex("""(?i)\b(gallons?|gal|cases?|boxes?)\b"""), "")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+        return cleaned.ifBlank { value.trim() }
+    }
+
+    private fun String.toSentenceCase(): String {
+        val normalized = trim()
+            .replace(Regex("""\s+"""), " ")
+            .replace("grab and go", "grab-and-go", ignoreCase = true)
+        return normalized.replaceFirstChar { char ->
+            if (char.isLowerCase()) char.titlecase(Locale.US) else char.toString()
+        }
+    }
+
+    private fun String.toTaskCase(): String = toSentenceCase()
+
+    private fun String.toProductCase(): String =
+        trim().replace(Regex("""\s+"""), " ")
+            .split(' ')
+            .joinToString(" ") { word ->
+                if (word.length <= 2 && word.all { it.isUpperCase() }) {
+                    word
+                } else {
+                    word.lowercase(Locale.US).replaceFirstChar { char ->
+                        if (char.isLowerCase()) char.titlecase(Locale.US) else char.toString()
+                    }
+                }
+            }
+
+    private val spokenQuantities = linkedMapOf(
+        "one and a half" to "1.5",
+        "two and a half" to "2.5",
+        "three and a half" to "3.5",
+        "four and a half" to "4.5",
+        "five and a half" to "5.5",
+        "one" to "1",
+        "two" to "2",
+        "three" to "3",
+        "four" to "4",
+        "five" to "5",
+        "six" to "6",
+        "seven" to "7",
+        "eight" to "8",
+        "nine" to "9",
+        "ten" to "10"
+    )
+}
+
+object FutureAiFormatter {
+    fun isAvailable(): Boolean = false
+
+    @Suppress("UNUSED_PARAMETER")
+    fun format(
+        rawTranscript: String,
+        type: WorkVoiceCaptureType
+    ): WorkVoiceCaptureResult? = null
+}

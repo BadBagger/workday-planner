@@ -3,6 +3,7 @@ package com.example.workdayplanner.data
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 
 class PayEstimatorTest {
@@ -129,5 +130,30 @@ class PayEstimatorTest {
         assertEquals(90.0, estimate.paidHours, 0.01)
         assertEquals(10.0, estimate.overtimeHours, 0.01)
         assertEquals(1900.0, estimate.grossPay, 0.01)
+    }
+
+    @Test
+    fun actualWeekUsesTimecardsForOvertimeEstimate() {
+        val entries = (0L..4L).map { day ->
+            val date = LocalDate.of(2026, 7, 6).plusDays(day)
+            TimecardEntry(
+                date = date,
+                clockIn = LocalDateTime.of(date, LocalTime.of(8, 0)),
+                clockOut = LocalDateTime.of(date, LocalTime.of(17, 0))
+            )
+        }
+        val state = AppState(
+            timecards = entries,
+            paySettings = PaySettings(hourlyRate = 20.0, overtimeThresholdHours = 40.0, overtimeMultiplier = 1.5)
+        )
+
+        val estimate = PayEstimator.estimateActualWeek(state, LocalDate.of(2026, 7, 8))
+
+        assertEquals(45.0, estimate.paidHours, 0.01)
+        assertEquals(40.0, estimate.regularHours, 0.01)
+        assertEquals(5.0, estimate.overtimeHours, 0.01)
+        assertEquals(800.0, estimate.regularPay, 0.01)
+        assertEquals(150.0, estimate.overtimePay, 0.01)
+        assertEquals(950.0, estimate.grossPay, 0.01)
     }
 }

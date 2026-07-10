@@ -23,6 +23,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -50,6 +51,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -149,6 +151,10 @@ import com.example.workdayplanner.data.WorkChecklistTemplates
 import com.example.workdayplanner.data.WorkImage
 import com.example.workdayplanner.data.WorkShift
 import com.example.workdayplanner.data.WorkEvent
+import com.example.workdayplanner.data.WorkNoteOrganizer
+import com.example.workdayplanner.data.WorkNoteTemplates
+import com.example.workdayplanner.data.WorkVoiceCaptureParser
+import com.example.workdayplanner.data.WorkVoiceCaptureType
 import com.example.workdayplanner.data.ShiftTemplate
 import com.example.workdayplanner.data.ShiftTemplateKind
 import java.io.File
@@ -184,6 +190,22 @@ private enum class TrainingView(val label: String) {
     Completed("Completed"),
     All("All")
 }
+
+private val workNoteKinds = listOf(
+    WorkNoteKind.ShiftNote,
+    WorkNoteKind.ManagerHandoff,
+    WorkNoteKind.OrderNote,
+    WorkNoteKind.TruckNote,
+    WorkNoteKind.InventoryNote,
+    WorkNoteKind.EmployeeTrainingNote,
+    WorkNoteKind.ReminderNote,
+    WorkNoteKind.PayTimecardNote
+)
+
+private fun noteSort(): Comparator<WorkNote> =
+    compareByDescending<WorkNote> { it.pinned }
+        .thenByDescending { it.date }
+        .thenByDescending { it.createdAt }
 
 @Composable
 fun PlannerApp(
@@ -232,6 +254,7 @@ fun PlannerApp(
                     currentRoute.startsWith(Screen.EventDetail.route) -> "Event"
                     currentRoute == Screen.Manager.route -> "Manager"
                     currentRoute == Screen.Notes.route -> "Notes"
+                    currentRoute == Screen.WeeklyReview.route -> "Weekly Review"
                     currentRoute == Screen.Schedule.route -> "Schedule"
                     currentRoute == Screen.Import.route -> "Import"
                     currentRoute == Screen.Settings.route -> "Settings"
@@ -295,6 +318,7 @@ fun PlannerApp(
                     onScheduleShortcut = { navController.navigate(Screen.Schedule.route) },
                     onImportSchedule = { navController.navigate(Screen.Import.route) },
                     onMarkTodayOff = { viewModel.addTypedDayOff(LocalDate.now(), ShiftTemplateKind.DayOff) },
+                    onWeeklyReview = { navController.navigate(Screen.WeeklyReview.route) },
                     onAddEvent = { navController.navigate("${Screen.EventDetail.route}/new") },
                     onToggleComplete = viewModel::toggleComplete,
                     onDelete = viewModel::deleteTask,
@@ -303,7 +327,7 @@ fun PlannerApp(
                     onStartLunch = viewModel::startLunch,
                     onEndLunch = viewModel::endLunch,
                     onClockOut = viewModel::clockOut,
-                    onSaveTimecardNote = viewModel::saveTimecardNote,
+                    onSaveTimecardEntry = viewModel::saveTimecardEntry,
                     onAddChecklist = viewModel::addChecklistTemplate,
                     onOpenPremium = { showPremiumScreen = true }
                 )
@@ -311,9 +335,12 @@ fun PlannerApp(
             composable(Screen.Notes.route) {
                 NotesScreen(
                     state = state,
-                    onAddNote = viewModel::addWorkNote,
+                    onSaveNote = viewModel::saveWorkNote,
                     onDeleteNote = viewModel::deleteWorkNote,
                     onCreateTaskFromNote = viewModel::createTaskFromNote,
+                    onCreateChecklistFromNote = viewModel::createChecklistFromNote,
+                    onTogglePinned = viewModel::toggleWorkNotePinned,
+                    onToggleArchived = viewModel::toggleWorkNoteArchived,
                     imageMessage = imageMessage,
                     onAddImage = viewModel::addWorkImage,
                     onDeleteImage = viewModel::deleteWorkImage
@@ -333,10 +360,20 @@ fun PlannerApp(
                     onCreateFollowUps = viewModel::createTrainingFollowUpTasks
                 )
             }
+            composable(Screen.WeeklyReview.route) {
+                WeeklyReviewScreen(
+                    state = state,
+                    onSaveTimecardEntry = viewModel::saveTimecardEntry,
+                    onAddTaskNextWeek = { navController.navigate("${Screen.TaskDetail.route}/new") },
+                    onReviewSchedule = { navController.navigate(Screen.Schedule.route) },
+                    onClearCompletedTasks = viewModel::clearCompletedTasks
+                )
+            }
             composable(Screen.Schedule.route) {
                 ScheduleScreen(
                     state = state,
                     onAddShift = viewModel::saveShift,
+                    onAddTask = viewModel::saveTask,
                     onDeleteShift = viewModel::deleteShift,
                     onSaveShiftTemplate = viewModel::saveShiftTemplate,
                     onDeleteShiftTemplate = viewModel::deleteShiftTemplate,
@@ -375,7 +412,6 @@ fun PlannerApp(
                 if (showPremiumScreen) {
                     PremiumScreen(
                         state = state,
-                        onMockPremiumChanged = viewModel::setMockPremium,
                         onBack = { showPremiumScreen = false }
                     )
                 } else {
@@ -391,7 +427,6 @@ fun PlannerApp(
                         onLoadCalendars = viewModel::loadCalendars,
                         onSelectCalendar = viewModel::setSelectedCalendar,
                         onSyncCalendar = viewModel::syncShiftsToCalendar,
-                        onMockPremiumChanged = viewModel::setMockPremium,
                         onNotificationPermissionNeeded = onNotificationPermissionNeeded,
                         onOpenPremium = { showPremiumScreen = true }
                     )
@@ -549,6 +584,7 @@ private fun TaskListScreen(
     onScheduleShortcut: () -> Unit,
     onImportSchedule: () -> Unit,
     onMarkTodayOff: () -> Unit,
+    onWeeklyReview: () -> Unit,
     onAddEvent: () -> Unit,
     onToggleComplete: (String) -> Unit,
     onDelete: (String) -> Unit,
@@ -557,7 +593,7 @@ private fun TaskListScreen(
     onStartLunch: () -> Unit,
     onEndLunch: () -> Unit,
     onClockOut: () -> Unit,
-    onSaveTimecardNote: (String) -> Unit,
+    onSaveTimecardEntry: (TimecardEntry) -> Unit,
     onAddChecklist: (String) -> Unit,
     onOpenPremium: () -> Unit
 ) {
@@ -614,7 +650,6 @@ private fun TaskListScreen(
         )
         .firstOrNull()
     val events = state.events.sortedBy { it.startsAt }
-    val risks = ScheduleRiskAnalyzer.risks(state, today)
     if (tasks.isEmpty() && events.isEmpty()) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
@@ -629,16 +664,16 @@ private fun TaskListScreen(
                 onAddRepeatingTask = onAddRepeatingTask,
                 onScheduleShortcut = onScheduleShortcut,
                 onImportSchedule = onImportSchedule,
-                onMarkTodayOff = onMarkTodayOff
+                onMarkTodayOff = onMarkTodayOff,
+                onWeeklyReview = onWeeklyReview
             )
-            ScheduleRiskSection(risks = risks)
             TimecardSection(
                 state = state,
                 onClockIn = onClockIn,
                 onStartLunch = onStartLunch,
                 onEndLunch = onEndLunch,
                 onClockOut = onClockOut,
-                onSaveNote = onSaveTimecardNote
+                onSaveEntry = onSaveTimecardEntry
             )
             ChecklistTemplateSection(state = state, onAddChecklist = onAddChecklist, onOpenPremium = onOpenPremium)
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
@@ -664,11 +699,9 @@ private fun TaskListScreen(
                 onAddRepeatingTask = onAddRepeatingTask,
                 onScheduleShortcut = onScheduleShortcut,
                 onImportSchedule = onImportSchedule,
-                onMarkTodayOff = onMarkTodayOff
+                onMarkTodayOff = onMarkTodayOff,
+                onWeeklyReview = onWeeklyReview
             )
-        }
-        if (risks.isNotEmpty()) {
-            item { ScheduleRiskSection(risks = risks) }
         }
         item {
             TimecardSection(
@@ -677,7 +710,7 @@ private fun TaskListScreen(
                 onStartLunch = onStartLunch,
                 onEndLunch = onEndLunch,
                 onClockOut = onClockOut,
-                onSaveNote = onSaveTimecardNote
+                onSaveEntry = onSaveTimecardEntry
             )
         }
         item { ChecklistTemplateSection(state = state, onAddChecklist = onAddChecklist, onOpenPremium = onOpenPremium) }
@@ -1554,16 +1587,20 @@ private fun TrainingItemCard(
 @Composable
 private fun NotesScreen(
     state: AppState,
-    onAddNote: (String) -> Unit,
+    onSaveNote: (WorkNote) -> Unit,
     onDeleteNote: (String) -> Unit,
     onCreateTaskFromNote: (String) -> Unit,
+    onCreateChecklistFromNote: (String) -> Unit,
+    onTogglePinned: (String) -> Unit,
+    onToggleArchived: (String) -> Unit,
     imageMessage: String?,
     onAddImage: (String, Uri) -> Unit,
     onDeleteImage: (String) -> Unit
 ) {
     val today = LocalDate.now()
-    val todayNotes = state.notes.filter { it.date == today }.sortedByDescending { it.createdAt }
-    val recentNotes = state.notes.filterNot { it.date == today }.sortedByDescending { it.createdAt }
+    val visibleNotes = state.notes.filterNot { it.archived }
+    val todayNotes = visibleNotes.filter { it.date == today }.sortedWith(noteSort())
+    val recentNotes = visibleNotes.filterNot { it.date == today }.sortedWith(noteSort())
     val images = state.images.sortedWith(compareByDescending<WorkImage> { it.date }.thenByDescending { it.createdAt })
 
     LazyColumn(
@@ -1574,9 +1611,13 @@ private fun NotesScreen(
             DailyNotesSection(
                 todayNotes = todayNotes,
                 recentNotes = recentNotes,
-                onAddNote = onAddNote,
+                shifts = state.shifts,
+                onSaveNote = onSaveNote,
                 onDeleteNote = onDeleteNote,
-                onCreateTaskFromNote = onCreateTaskFromNote
+                onCreateTaskFromNote = onCreateTaskFromNote,
+                onCreateChecklistFromNote = onCreateChecklistFromNote,
+                onTogglePinned = onTogglePinned,
+                onToggleArchived = onToggleArchived
             )
         }
         item {
@@ -1601,7 +1642,8 @@ private fun CommandCenterCard(
     onAddRepeatingTask: () -> Unit,
     onScheduleShortcut: () -> Unit,
     onImportSchedule: () -> Unit,
-    onMarkTodayOff: () -> Unit
+    onMarkTodayOff: () -> Unit,
+    onWeeklyReview: () -> Unit
 ) {
     val today = LocalDate.now()
     val now = LocalDateTime.now()
@@ -1613,6 +1655,8 @@ private fun CommandCenterCard(
     val todayTasks = state.tasks.filter { !it.completed && it.deadline?.toLocalDate() == today && !it.isSkippedBecauseDayOff(state, today) }
     val overdueTasks = state.tasks.filter { !it.completed && it.deadline?.isBefore(now) == true }
     val remindersToday = state.tasks.filter { !it.completed && it.alarmAt?.toLocalDate() == today }
+    val weekHours = PayEstimator.estimateWeek(state, today).paidHours
+    val watchOuts = dashboardWatchOuts(state, today, now, nextShift, overdueTasks)
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -1629,28 +1673,39 @@ private fun CommandCenterCard(
             onImportSchedule = onImportSchedule,
             onScheduleShortcut = onScheduleShortcut
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            DashboardStatCard(
-                label = "Work tasks",
-                value = todayTasks.size.coerceAtLeast(todayTaskCount).toString(),
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.weight(1f)
-            )
-            DashboardStatCard(
-                label = "Overdue",
-                value = overdueTasks.size.coerceAtLeast(overdueTaskCount).toString(),
-                containerColor = MaterialTheme.colorScheme.dangerContainer,
-                contentColor = MaterialTheme.colorScheme.onDangerContainer,
-                modifier = Modifier.weight(1f)
-            )
-            DashboardStatCard(
-                label = "Reminders",
-                value = remindersToday.size.coerceAtLeast(upcomingAlarmCount).toString(),
-                containerColor = MaterialTheme.colorScheme.warningContainer,
-                contentColor = MaterialTheme.colorScheme.onWarningContainer,
-                modifier = Modifier.weight(1f)
-            )
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                DashboardStatCard(
+                    label = "Work tasks",
+                    value = todayTasks.size.coerceAtLeast(todayTaskCount).toString(),
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.weight(1f)
+                )
+                DashboardStatCard(
+                    label = "Overdue",
+                    value = overdueTasks.size.coerceAtLeast(overdueTaskCount).toString(),
+                    containerColor = MaterialTheme.colorScheme.dangerContainer,
+                    contentColor = MaterialTheme.colorScheme.onDangerContainer,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                DashboardStatCard(
+                    label = "Reminders",
+                    value = remindersToday.size.coerceAtLeast(upcomingAlarmCount).toString(),
+                    containerColor = MaterialTheme.colorScheme.warningContainer,
+                    contentColor = MaterialTheme.colorScheme.onWarningContainer,
+                    modifier = Modifier.weight(1f)
+                )
+                DashboardStatCard(
+                    label = "Hours this week",
+                    value = weekHours.toSimpleString(),
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
         if (state.paySettings.showPayOnDashboard && state.paySettings.hourlyRate > 0.0) {
             DashboardPayEstimateCard(state)
@@ -1661,14 +1716,22 @@ private fun CommandCenterCard(
             onAddFromTemplate = onAddRepeatingTask,
             onAddTask = onAddTask
         )
+        if (watchOuts.isNotEmpty()) {
+            DashboardWatchOutsCard(watchOuts)
+        }
+        SectionHeader("Quick actions")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             DashboardActionButton("Add shift", Icons.Default.CalendarMonth, onScheduleShortcut, Modifier.weight(1f), outlined = true)
-            DashboardActionButton("Import schedule", Icons.Default.FileUpload, onImportSchedule, Modifier.weight(1f), outlined = true)
+            DashboardActionButton("New task", Icons.Default.Add, onAddTask, Modifier.weight(1f))
         }
-        OutlinedButton(onClick = onMarkTodayOff, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.CalendarMonth, contentDescription = null)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            DashboardActionButton("Import", Icons.Default.FileUpload, onImportSchedule, Modifier.weight(1f), outlined = true)
+            DashboardActionButton("Mark day off", Icons.Default.CalendarMonth, onMarkTodayOff, Modifier.weight(1f), outlined = true)
+        }
+        OutlinedButton(onClick = onWeeklyReview, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Default.Event, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Mark day off")
+            Text("Weekly review")
         }
     }
 }
@@ -1892,6 +1955,168 @@ private fun NextShiftDashboardCard(
             listOf(nextShift.location, nextShift.notes)
                 .filter { it.isNotBlank() }
                 .forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            OutlinedButton(onClick = onScheduleShortcut, modifier = Modifier.fillMaxWidth()) {
+                Text("Edit shift")
+            }
+        }
+    }
+}
+
+private data class DashboardWatchOut(val title: String, val detail: String, val severity: WatchSeverity)
+
+private enum class WatchSeverity { Warning, Danger }
+
+private fun dashboardWatchOuts(
+    state: AppState,
+    today: LocalDate,
+    now: LocalDateTime,
+    nextShift: WorkShift?,
+    overdueTasks: List<TaskItem>
+): List<DashboardWatchOut> {
+    val week = PayEstimator.estimateWeek(state, today)
+    val todayEntry = state.timecards.firstOrNull { it.date == today }
+    val endedShiftWithoutClockOut = state.shifts.any { shift ->
+        shift.date == today &&
+            shift.endDateTime().isBefore(now) &&
+            todayEntry?.clockIn != null &&
+            todayEntry.clockOut == null
+    }
+    val startsSoon = nextShift?.startDateTime()?.let { start ->
+        !start.isBefore(now) && Duration.between(now, start).toMinutes() in 0..60
+    } == true
+    return buildList {
+        if (overdueTasks.isNotEmpty()) {
+            add(DashboardWatchOut("Overdue task", "${overdueTasks.size} task${if (overdueTasks.size == 1) "" else "s"} past deadline.", WatchSeverity.Danger))
+        }
+        if (endedShiftWithoutClockOut) {
+            add(DashboardWatchOut("Possible missed punch", "A shift has ended and your personal timecard is still open.", WatchSeverity.Danger))
+        }
+        if (week.overtimeHours > 0.0) {
+            add(DashboardWatchOut("Overtime estimated", "${week.overtimeHours.toSimpleString()} overtime hrs this week.", WatchSeverity.Warning))
+        } else if (week.hoursUntilOvertime in 0.01..4.0) {
+            add(DashboardWatchOut("Close to overtime", "${week.hoursUntilOvertime.toSimpleString()} hrs until weekly overtime.", WatchSeverity.Warning))
+        }
+        if (startsSoon && todayEntry?.clockIn == null) {
+            add(DashboardWatchOut("Shift starts soon", "${nextShift?.label?.ifBlank { "Work" } ?: "Shift"} starts ${nextShift?.timeUntilShift(now)}.", WatchSeverity.Warning))
+        }
+        ScheduleRiskAnalyzer.risks(state, today).take(2).forEach { risk ->
+            add(DashboardWatchOut(risk.title, risk.detail, WatchSeverity.Warning))
+        }
+    }.distinctBy { it.title to it.detail }.take(4)
+}
+
+@Composable
+private fun DashboardWatchOutsCard(watchOuts: List<DashboardWatchOut>) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.warningContainer.copy(alpha = 0.45f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.warning.copy(alpha = 0.45f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            SectionHeader("Watch-outs")
+            watchOuts.forEach { watch ->
+                val color = if (watch.severity == WatchSeverity.Danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onWarningContainer
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(watch.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = color)
+                    Text(watch.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onWarningContainer)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BeforeShiftBriefCard(
+    state: AppState,
+    nextShift: WorkShift?,
+    now: LocalDateTime,
+    onAddTask: () -> Unit,
+    onScheduleShortcut: () -> Unit
+) {
+    if (nextShift == null) return
+    val shiftStart = nextShift.startDateTime()
+    val prepTasks = state.tasks
+        .filter { task ->
+            !task.completed &&
+                task.workRelated &&
+                task.deadline != null &&
+                !task.deadline.isBefore(now) &&
+                !task.deadline.isAfter(shiftStart)
+        }
+        .sortedWith(compareBy<TaskItem> { it.deadline }.thenByDescending { it.priority.sortWeight })
+        .take(4)
+    val settings = state.shiftAlarmSettings
+    val alarmLine = if (settings.enabled) {
+        val alarmAt = shiftStart.minusMinutes(settings.offsetMinutes.toLong())
+        "Shift alarm: ${alarmAt.format(dateTimeFormatter)} (${shiftAlarmOffsetLabel(settings.offsetMinutes)} before)."
+    } else {
+        "Shift alarm is off. Turn it on in Settings when you want a wake-up alarm."
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionHeader("Before shift", "What matters before ${nextShift.start.format(timeFormatter)}.")
+            Text(alarmLine, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            if (prepTasks.isEmpty()) {
+                Text(
+                    "No prep tasks before this shift. Common ones: uniform, lunch, keys, check schedule.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                prepTasks.forEach { task ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.weight(1f)) {
+                            Text(task.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            task.deadline?.let {
+                                Text("Due ${it.format(dateTimeFormatter)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        AssistChip(onClick = {}, label = { Text(task.priority.label) })
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onScheduleShortcut, modifier = Modifier.weight(1f)) { Text("Review schedule") }
+                Button(onClick = onAddTask, modifier = Modifier.weight(1f)) { Text("Add prep task") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkNotesSummaryCard(state: AppState) {
+    val priorityKinds = setOf(
+        WorkNoteKind.Manager,
+        WorkNoteKind.ManagerHandoff,
+        WorkNoteKind.EmployeeTrainingNote,
+        WorkNoteKind.ReminderNote,
+        WorkNoteKind.PayTimecardNote,
+        WorkNoteKind.Issue,
+        WorkNoteKind.FollowUp,
+        WorkNoteKind.Meeting
+    )
+    val notes = state.notes
+        .filter { !it.archived && (it.pinned || it.kind in priorityKinds) }
+        .sortedWith(noteSort())
+        .take(3)
+    if (notes.isEmpty()) return
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.42f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionHeader("Work notes to remember", "Manager notes, issues, and follow-ups.")
+            notes.forEach { note ->
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("${note.kind.label} - ${note.date.format(shortDateFormatter)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(note.title.ifBlank { note.text.lineSequence().firstOrNull().orEmpty() }.take(120), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
         }
     }
 }
@@ -1991,30 +2216,72 @@ private fun DashboardMetricChip(label: String, containerColor: Color, labelColor
 
 @Composable
 private fun DashboardPayEstimateCard(state: AppState) {
-    val week = PayEstimator.estimateWeek(state)
+    val scheduledWeek = PayEstimator.estimateWeek(state)
+    val actualWeek = PayEstimator.estimateActualWeek(state)
     val period = PayEstimator.estimatePayPeriod(state)
+    val payWatchOuts = payDashboardWatchOuts(state, scheduledWeek, actualWeek)
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Estimated gross pay before taxes and deductions.", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                PayMiniMetric("This week", week, Modifier.weight(1f))
-                PayMiniMetric("Pay period", period, Modifier.weight(1f))
+                PayHoursMetric("Scheduled", "${scheduledWeek.paidHours.toSimpleString()} hrs", Modifier.weight(1f))
+                PayHoursMetric("Actual", "${actualWeek.paidHours.toSimpleString()} hrs", Modifier.weight(1f))
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PayMoneyMetric("Regular", actualWeek.regularPay.takeIf { actualWeek.paidHours > 0.0 } ?: scheduledWeek.regularPay, Modifier.weight(1f))
+                PayMoneyMetric("Overtime", actualWeek.overtimePay.takeIf { actualWeek.paidHours > 0.0 } ?: scheduledWeek.overtimePay, Modifier.weight(1f))
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PayMoneyMetric("Gross", actualWeek.grossPay.takeIf { actualWeek.paidHours > 0.0 } ?: scheduledWeek.grossPay, Modifier.weight(1f))
+                PayHoursMetric("Until OT", (actualWeek.hoursUntilOvertime.takeIf { actualWeek.paidHours > 0.0 } ?: scheduledWeek.hoursUntilOvertime).toSimpleString() + " hrs", Modifier.weight(1f))
+            }
+            Text("Pay period scheduled estimate: $${period.grossPay.toMoneyString()} / ${period.paidHours.toSimpleString()} paid hrs.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            payWatchOuts.forEach { watch ->
+                Text(watch, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
         }
     }
 }
 
 @Composable
-private fun PayMiniMetric(label: String, estimate: PayEstimate, modifier: Modifier = Modifier) {
+private fun PayHoursMetric(label: String, value: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
         Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("$${estimate.grossPay.toMoneyString()}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text("${estimate.paidHours.toSimpleString()} paid hrs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
     }
+}
+
+@Composable
+private fun PayMoneyMetric(label: String, value: Double, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("$${value.toMoneyString()}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+private fun payDashboardWatchOuts(state: AppState, scheduledWeek: PayEstimate, actualWeek: PayEstimate): List<String> {
+    val active = if (actualWeek.paidHours > 0.0) actualWeek else scheduledWeek
+    val missedPunch = state.timecards.any { it.clockIn != null && it.clockOut == null }
+    val longShift = state.shifts.any { it.durationMinutes() >= 10 * 60 } ||
+        state.timecards.any { entry -> TimecardCalculator.summarize(entry, state.paySettings).workedHours >= 10.0 }
+    return buildList {
+        when {
+            active.overtimeHours > 0.0 -> add("Overtime likely: ${active.overtimeHours.toSimpleString()} OT hrs estimated.")
+            active.hoursUntilOvertime in 0.01..4.0 -> add("Close to overtime: ${active.hoursUntilOvertime.toSimpleString()} hrs remaining.")
+        }
+        if (scheduledWeek.paidHours > 0.0 && scheduledWeek.paidHours < state.paySettings.overtimeThresholdHours * 0.5) {
+            add("Lower hours than normal: scheduled paid hrs are under half your OT threshold.")
+        }
+        if (longShift) add("Long shift watch-out: one shift or punch is 10+ hrs.")
+        if (missedPunch) add("Missed punch may affect estimate.")
+        if (state.paySettings.deductUnpaidBreaks) {
+            add("Breaks deducted: ${state.paySettings.unpaidLunchMinutes} min per scheduled shift.")
+        }
+    }.take(4)
 }
 
 private fun upcomingAlarmCount(state: AppState, now: LocalDateTime): Int {
@@ -2110,14 +2377,25 @@ private fun TimecardSection(
     onStartLunch: () -> Unit,
     onEndLunch: () -> Unit,
     onClockOut: () -> Unit,
-    onSaveNote: (String) -> Unit
+    onSaveEntry: (TimecardEntry) -> Unit
 ) {
+    val context = LocalContext.current
     val today = LocalDate.now()
     val entry = state.timecards.firstOrNull { it.date == today }
+    val editableEntry = entry ?: TimecardEntry(date = today)
     val summary = entry?.let { TimecardCalculator.summarize(it, state.paySettings) }
     val weekSummary = TimecardCalculator.summarizeWeek(state, today)
     val scheduled = PayEstimator.estimateDay(state, today)
-    var noteText by remember(entry?.id, entry?.note) { mutableStateOf(entry?.note.orEmpty()) }
+    val scheduledWeek = PayEstimator.estimateWeek(state, today)
+    val watchOuts = timecardWatchOuts(state, today, entry, summary, weekSummary, scheduled)
+    var editingEntry by remember(entry?.id, entry) { mutableStateOf(editableEntry) }
+    var showManualEdit by remember(entry?.id) { mutableStateOf(false) }
+    var noteText by remember(entry?.id, entry?.note) { mutableStateOf(editableEntry.note) }
+    var missedPunchNote by remember(entry?.id, entry?.missedPunchNote) { mutableStateOf(editableEntry.missedPunchNote) }
+    var payIssueNote by remember(entry?.id, entry?.payIssueNote) { mutableStateOf(editableEntry.payIssueNote) }
+    val exportText = remember(state.timecards, state.shifts, state.paySettings, today) {
+        buildWeeklyTimecardExport(state, today)
+    }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -2125,7 +2403,8 @@ private fun TimecardSection(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SectionHeader("Personal timecard", "Track what you actually worked for your own records.")
+            SectionHeader("Personal timecard", "For your personal records only.")
+            TimecardStatusBanner(state = state, entry = entry, scheduled = scheduled)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onClockIn, enabled = entry?.clockIn == null) { Text("Clock in") }
                 OutlinedButton(onClick = onStartLunch, enabled = entry?.clockIn != null && entry.lunchStart == null && entry.clockOut == null) {
@@ -2136,40 +2415,239 @@ private fun TimecardSection(
                 }
                 OutlinedButton(onClick = onClockOut, enabled = entry?.clockIn != null && entry.clockOut == null) { Text("Clock out") }
             }
+            Text(
+                punchButtonHint(entry),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             TimePunchRows(entry)
             if (summary != null) {
-                Text(
-                    "Actual today: ${summary.paidHours.toSimpleString()} paid hrs" +
-                        if (state.paySettings.hourlyRate > 0.0) " / $${summary.grossPay.toMoneyString()}" else "",
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                if (scheduled.paidHours > 0.0) {
-                    val delta = summary.paidHours - scheduled.paidHours
-                    Text(
-                        "Scheduled estimate: ${scheduled.paidHours.toSimpleString()} paid hrs (${delta.toSignedHours()} vs actual)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    TimecardMetric("Actual", "${summary.workedHours.toSimpleString()} hrs", Modifier.weight(1f))
+                    TimecardMetric("Paid", "${summary.paidHours.toSimpleString()} hrs", Modifier.weight(1f))
                 }
+                val delta = summary.paidHours - scheduled.paidHours
+                Text(
+                    if (scheduled.paidHours > 0.0) {
+                        "Scheduled vs actual: ${scheduled.paidHours.toSimpleString()} scheduled paid hrs (${delta.toSignedHours()})."
+                    } else {
+                        "No scheduled shift estimate for today."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             } else {
                 Text("No actual time logged today.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text(
-                "Actual this week: ${weekSummary.paidHours.toSimpleString()} paid hrs" +
-                    if (state.paySettings.hourlyRate > 0.0) " / $${weekSummary.grossPay.toMoneyString()}" else "",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            if (watchOuts.isNotEmpty()) {
+                TimecardWatchOuts(watchOuts)
+            }
+            TextButton(onClick = { showManualEdit = !showManualEdit }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (showManualEdit) "Hide manual correction" else "Manual edit times")
+            }
+            if (showManualEdit) {
+                ManualTimecardEditor(
+                    entry = editingEntry,
+                    onEntryChange = { editingEntry = it },
+                    onSave = {
+                        onSaveEntry(
+                            editingEntry.copy(
+                                note = noteText.trim(),
+                                missedPunchNote = missedPunchNote.trim(),
+                                payIssueNote = payIssueNote.trim()
+                            )
+                        )
+                        showManualEdit = false
+                    }
+                )
+            }
+            OutlinedTextField(
+                value = missedPunchNote,
+                onValueChange = { missedPunchNote = it },
+                label = { Text("Missed punch note") },
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = payIssueNote,
+                onValueChange = { payIssueNote = it },
+                label = { Text("Pay issue note") },
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
                 value = noteText,
                 onValueChange = { noteText = it },
-                label = { Text("Missed punch or pay note") },
+                label = { Text("Manual correction note") },
                 minLines = 2,
                 modifier = Modifier.fillMaxWidth()
             )
-            OutlinedButton(onClick = { onSaveNote(noteText) }, modifier = Modifier.fillMaxWidth()) {
-                Text("Save timecard note")
+            Button(
+                onClick = {
+                    onSaveEntry(editableEntry.copy(note = noteText.trim(), missedPunchNote = missedPunchNote.trim(), payIssueNote = payIssueNote.trim()))
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Save notes")
+            }
+            TimecardWeeklySummaryCard(
+                weekSummary = weekSummary,
+                scheduledWeek = scheduledWeek,
+                notesCount = state.timecards.count { it.hasIssueNote() },
+                settings = state.paySettings
+            )
+            OutlinedButton(
+                onClick = {
+                    val share = Intent(Intent.ACTION_SEND)
+                        .setType("text/plain")
+                        .putExtra(Intent.EXTRA_SUBJECT, "Workday Planner weekly timecard")
+                        .putExtra(Intent.EXTRA_TEXT, exportText)
+                    context.startActivity(Intent.createChooser(share, "Share weekly timecard"))
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Export/share weekly timecard")
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimecardMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+        modifier = modifier
+    ) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun ManualTimecardEditor(entry: TimecardEntry, onEntryChange: (TimecardEntry) -> Unit, onSave: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.32f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Manual correction", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text("Use this when you missed a punch or need your own corrected record.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TimecardDateTimeEdit("Clock in", entry.date, entry.clockIn) { onEntryChange(entry.copy(clockIn = it)) }
+            TimecardDateTimeEdit("Lunch start", entry.date, entry.lunchStart) { onEntryChange(entry.copy(lunchStart = it)) }
+            TimecardDateTimeEdit("Lunch end", entry.date, entry.lunchEnd) { onEntryChange(entry.copy(lunchEnd = it)) }
+            TimecardDateTimeEdit("Clock out", entry.date, entry.clockOut) { onEntryChange(entry.copy(clockOut = it)) }
+            Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
+                Text("Save corrected times")
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimecardDateTimeEdit(label: String, date: LocalDate, value: LocalDateTime?, onChanged: (LocalDateTime?) -> Unit) {
+    if (value == null) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.labelLarge)
+                Text("Not set", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            OutlinedButton(onClick = { onChanged(date.atTime(LocalTime.now().withSecond(0).withNano(0))) }) {
+                Text("Add")
+            }
+        }
+    } else {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            DateTimeRow(label, value, onChanged = { onChanged(it) })
+            TextButton(onClick = { onChanged(null) }, modifier = Modifier.align(Alignment.End)) {
+                Text("Clear $label")
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimecardWatchOuts(watchOuts: List<String>) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.warningContainer.copy(alpha = 0.45f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.warning.copy(alpha = 0.45f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Timecard watch-outs", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onWarningContainer)
+            watchOuts.forEach {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onWarningContainer)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimecardWeeklySummaryCard(
+    weekSummary: com.example.workdayplanner.data.TimecardSummary,
+    scheduledWeek: PayEstimate,
+    notesCount: Int,
+    settings: PaySettings
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionHeader("Weekly timecard summary")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                TimecardMetric("Scheduled", "${scheduledWeek.paidHours.toSimpleString()} hrs", Modifier.weight(1f))
+                TimecardMetric("Actual", "${weekSummary.workedHours.toSimpleString()} hrs", Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                TimecardMetric("Paid", "${weekSummary.paidHours.toSimpleString()} hrs", Modifier.weight(1f))
+                TimecardMetric("Breaks", "${weekSummary.lunchHours.toSimpleString()} hrs", Modifier.weight(1f))
+            }
+            val gross = if (settings.hourlyRate > 0.0) " / $${weekSummary.grossPay.toMoneyString()} est." else ""
+            Text("Overtime estimate: ${weekSummary.overtimeHours.toSimpleString()} hrs$gross", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Notes/issues: $notesCount", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun TimecardStatusBanner(state: AppState, entry: TimecardEntry?, scheduled: PayEstimate) {
+    val today = LocalDate.now()
+    val now = LocalDateTime.now()
+    val nextTodayShift = state.shifts
+        .filter { it.date == today && it.endDateTime().isAfter(now) }
+        .minWithOrNull(compareBy<WorkShift> { it.start })
+    val status = when {
+        entry?.clockOut != null -> "Clocked out"
+        entry?.lunchStart != null && entry.lunchEnd == null -> "On lunch"
+        entry?.clockIn != null -> "Clocked in"
+        nextTodayShift != null -> "Not clocked in"
+        else -> "No shift punch started"
+    }
+    val detail = when {
+        entry?.clockOut != null -> "Today's punches are complete. Add a note if payroll needs context."
+        entry?.lunchStart != null && entry.lunchEnd == null -> "Lunch is running. Tap Lunch end when you return."
+        entry?.clockIn != null -> "You are tracking actual time for today."
+        nextTodayShift != null -> "Next shift starts ${nextTodayShift.timeUntilShift(now)}."
+        scheduled.paidHours > 0.0 -> "Scheduled estimate: ${scheduled.paidHours.toSimpleString()} paid hrs."
+        else -> "Use this only for your own records. It is not an employer clock."
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.32f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(status, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (scheduled.paidHours > 0.0) {
+                AssistChip(onClick = {}, label = { Text("${scheduled.paidHours.toSimpleString()} hrs") })
             }
         }
     }
@@ -2188,6 +2666,363 @@ private fun TimePunchRows(entry: TimecardEntry?) {
             AssistChip(onClick = {}, label = { Text("$label: ${value?.format(timeFormatter) ?: "--"}") })
         }
     }
+}
+
+private fun punchButtonHint(entry: TimecardEntry?): String {
+    return when {
+        entry?.clockIn == null -> "Lunch and clock out unlock after you clock in."
+        entry.lunchStart == null -> "Lunch start is available. Lunch end unlocks after lunch starts."
+        entry.lunchEnd == null && entry.clockOut == null -> "Lunch end is available while lunch is open."
+        entry.clockOut == null -> "Clock out is available. Add a missed punch note if you need to correct anything."
+        else -> "Today's punches are complete. You can still edit times manually."
+    }
+}
+
+private fun timecardWatchOuts(
+    state: AppState,
+    today: LocalDate,
+    entry: TimecardEntry?,
+    todaySummary: com.example.workdayplanner.data.TimecardSummary?,
+    weekSummary: com.example.workdayplanner.data.TimecardSummary,
+    scheduled: PayEstimate
+): List<String> {
+    val now = LocalDateTime.now()
+    val currentShift = state.shifts
+        .filter { it.date == today }
+        .minByOrNull { kotlin.math.abs(Duration.between(now, it.startDateTime()).toMinutes()) }
+    return buildList {
+        if (entry?.clockIn != null && entry.clockOut == null && currentShift?.endDateTime()?.isBefore(now) == true) {
+            add("Forgot to clock out? Your scheduled shift has already ended.")
+        }
+        if (todaySummary != null && todaySummary.workedHours >= 10.0) {
+            add("Long shift: ${todaySummary.workedHours.toSimpleString()} actual hrs today.")
+        }
+        val hoursUntilOvertime = state.paySettings.overtimeThresholdHours - weekSummary.paidHours
+        if (weekSummary.overtimeHours > 0.0) {
+            add("Overtime estimate: ${weekSummary.overtimeHours.toSimpleString()} paid hrs over threshold.")
+        } else if (hoursUntilOvertime in 0.01..4.0) {
+            add("Close to overtime: ${hoursUntilOvertime.toSimpleString()} paid hrs remaining.")
+        }
+        if (todaySummary != null && scheduled.paidHours > 0.0 && kotlin.math.abs(todaySummary.paidHours - scheduled.paidHours) >= 0.25) {
+            add("Actual paid hours differ from scheduled by ${(todaySummary.paidHours - scheduled.paidHours).toSignedHours()}.")
+        }
+        if (todaySummary != null && todaySummary.workedHours >= 6.0 && todaySummary.lunchHours == 0.0 && entry?.missedPunchNote.isNullOrBlank()) {
+            add("No lunch recorded on a ${todaySummary.workedHours.toSimpleString()} hr shift. Add a note if lunch was missed or forgotten.")
+        }
+    }.take(5)
+}
+
+private fun buildWeeklyTimecardExport(state: AppState, dateInWeek: LocalDate): String {
+    val weekStart = dateInWeek.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    val weekEnd = weekStart.plusDays(6)
+    val weekEntries = state.timecards
+        .filter { !it.date.isBefore(weekStart) && !it.date.isAfter(weekEnd) }
+        .sortedBy { it.date }
+    val actual = TimecardCalculator.summarizeWeek(state, dateInWeek)
+    val scheduled = PayEstimator.estimateWeek(state, dateInWeek)
+    return buildString {
+        appendLine("Workday Planner weekly timecard")
+        appendLine("For your personal records only.")
+        appendLine("${weekStart.format(shortDateFormatter)} - ${weekEnd.format(shortDateFormatter)}")
+        appendLine()
+        appendLine("Scheduled hours: ${scheduled.paidHours.toSimpleString()}")
+        appendLine("Actual hours: ${actual.workedHours.toSimpleString()}")
+        appendLine("Paid hours: ${actual.paidHours.toSimpleString()}")
+        appendLine("Unpaid break time: ${actual.lunchHours.toSimpleString()}")
+        appendLine("Overtime estimate: ${actual.overtimeHours.toSimpleString()}")
+        if (state.paySettings.hourlyRate > 0.0) {
+            appendLine("Estimated gross pay: $${actual.grossPay.toMoneyString()}")
+        }
+        appendLine()
+        if (weekEntries.isEmpty()) {
+            appendLine("No actual timecard entries this week.")
+        } else {
+            weekEntries.forEach { entry ->
+                val summary = TimecardCalculator.summarize(entry, state.paySettings)
+                appendLine("${entry.date.format(dateFormatter)}")
+                appendLine("  In: ${entry.clockIn?.format(timeFormatter) ?: "--"}")
+                appendLine("  Lunch: ${entry.lunchStart?.format(timeFormatter) ?: "--"} - ${entry.lunchEnd?.format(timeFormatter) ?: "--"}")
+                appendLine("  Out: ${entry.clockOut?.format(timeFormatter) ?: "--"}")
+                appendLine("  Paid: ${summary.paidHours.toSimpleString()} hrs")
+                listOf(
+                    "Correction" to entry.note,
+                    "Missed punch" to entry.missedPunchNote,
+                    "Pay issue" to entry.payIssueNote
+                ).filter { it.second.isNotBlank() }.forEach { (label, note) ->
+                    appendLine("  $label note: $note")
+                }
+            }
+        }
+    }
+}
+
+private fun TimecardEntry.hasIssueNote(): Boolean {
+    return note.isNotBlank() || missedPunchNote.isNotBlank() || payIssueNote.isNotBlank()
+}
+
+@Composable
+private fun WeeklyReviewScreen(
+    state: AppState,
+    onSaveTimecardEntry: (TimecardEntry) -> Unit,
+    onAddTaskNextWeek: () -> Unit,
+    onReviewSchedule: () -> Unit,
+    onClearCompletedTasks: () -> Unit
+) {
+    val context = LocalContext.current
+    val today = LocalDate.now()
+    val weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    val weekEnd = weekStart.plusDays(6)
+    val nextWeekStart = weekStart.plusWeeks(1)
+    val nextWeekEnd = nextWeekStart.plusDays(6)
+    val weekShifts = state.shifts.filter { it.date in weekStart..weekEnd }.sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start })
+    val nextWeekShifts = state.shifts.filter { it.date in nextWeekStart..nextWeekEnd }.sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start })
+    val weekDaysOff = state.daysOff.filter { it in weekStart..weekEnd }.sorted()
+    val nextWeekDaysOff = state.daysOff.filter { it in nextWeekStart..nextWeekEnd }.sorted()
+    val weekTasks = state.tasks.filter { task ->
+        task.deadline?.toLocalDate()?.let { it in weekStart..weekEnd } == true ||
+            task.completionHistory.any { it.toLocalDate() in weekStart..weekEnd }
+    }
+    val completedTasks = weekTasks.filter { task -> task.completed || task.completionHistory.any { it.toLocalDate() in weekStart..weekEnd } }
+    val missedTasks = weekTasks.filter { !it.completed && taskIsOverdueInWeek(it, weekEnd) }
+    val weekTimecards = state.timecards.filter { it.date in weekStart..weekEnd }.sortedBy { it.date }
+    val timecardNotes = weekTimecards.filter { it.note.isNotBlank() || it.missedPunchNote.isNotBlank() || it.payIssueNote.isNotBlank() }
+    val payNotes = state.notes.filter {
+        it.date in weekStart..weekEnd && it.kind == WorkNoteKind.PayTimecardNote
+    }
+    val scheduled = PayEstimator.estimateWeek(state, today)
+    val actual = TimecardCalculator.summarizeWeek(state, today)
+    val actualPay = PayEstimator.estimateActualWeek(state, today)
+    var missingPunchNote by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf<String?>(null) }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(screenPadding),
+        verticalArrangement = Arrangement.spacedBy(sectionGap)
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Weekly Review", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text("${weekStart.format(shortDateFormatter)} - ${weekEnd.format(shortDateFormatter)}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("For your personal records only.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        item {
+            WeeklySectionCard("This week") {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    WeeklyMetric("Shifts", weekShifts.size.toString(), Modifier.weight(1f))
+                    WeeklyMetric("Days off", weekDaysOff.size.toString(), Modifier.weight(1f))
+                }
+                if (weekShifts.isEmpty() && weekDaysOff.isEmpty()) {
+                    Text("No schedule saved for this week.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    weekShifts.take(5).forEach { shift ->
+                        Text("${shift.date.format(shortDateFormatter)} ${shift.start.format(timeFormatter)}-${shift.end.format(timeFormatter)} ${shift.label}", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (weekDaysOff.isNotEmpty()) {
+                        Text("Days off: ${weekDaysOff.joinToString { it.format(shortDateFormatter) }}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
+                    }
+                }
+            }
+        }
+        item {
+            WeeklySectionCard("Hours and pay") {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    WeeklyMetric("Scheduled", "${scheduled.scheduledHours.toSimpleString()} hrs", Modifier.weight(1f))
+                    WeeklyMetric("Actual", "${actual.workedHours.toSimpleString()} hrs", Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    WeeklyMetric("Paid", "${actual.paidHours.toSimpleString()} hrs", Modifier.weight(1f))
+                    WeeklyMetric("Overtime", "${maxOf(scheduled.overtimeHours, actual.overtimeHours).toSimpleString()} hrs", Modifier.weight(1f))
+                }
+                val gross = if (actual.paidHours > 0.0) actualPay.grossPay else scheduled.grossPay
+                WeeklyMetric("Estimated gross pay", "$${gross.toMoneyString()}", Modifier.fillMaxWidth())
+                Text("Estimated gross pay before taxes and deductions.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        item {
+            WeeklySectionCard("Tasks") {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    WeeklyMetric("Completed", completedTasks.size.toString(), Modifier.weight(1f))
+                    WeeklyMetric("Missed/overdue", missedTasks.size.toString(), Modifier.weight(1f))
+                }
+                if (missedTasks.isNotEmpty()) {
+                    missedTasks.take(4).forEach { task ->
+                        Text("${task.title} - due ${task.deadline?.format(dateTimeFormatter) ?: "no date"}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                    }
+                } else {
+                    Text("No missed tasks found for this week.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            WeeklySectionCard("Notes/issues") {
+                if (timecardNotes.isEmpty() && payNotes.isEmpty()) {
+                    Text("No timecard or pay issue notes this week.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    timecardNotes.forEach { entry ->
+                        val notes = listOf(entry.note, entry.missedPunchNote, entry.payIssueNote).filter { it.isNotBlank() }
+                        Text("${entry.date.format(shortDateFormatter)}: ${notes.joinToString(" | ")}", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    payNotes.forEach { note ->
+                        Text("${note.date.format(shortDateFormatter)}: ${note.title.ifBlank { note.text.take(40) }}", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                OutlinedTextField(
+                    value = missingPunchNote,
+                    onValueChange = { missingPunchNote = it },
+                    label = { Text("Add missing punch note") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    enabled = missingPunchNote.isNotBlank(),
+                    onClick = {
+                        val entry = state.timecards.firstOrNull { it.date == today } ?: TimecardEntry(date = today)
+                        onSaveTimecardEntry(entry.copy(missedPunchNote = missingPunchNote.trim()))
+                        missingPunchNote = ""
+                        message = "Missing punch note saved."
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Save punch note")
+                }
+            }
+        }
+        item {
+            WeeklySectionCard("Next week") {
+                if (nextWeekShifts.isEmpty() && nextWeekDaysOff.isEmpty()) {
+                    Text("No shifts saved for next week yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    nextWeekShifts.take(6).forEach { shift ->
+                        Text("${shift.date.format(shortDateFormatter)} ${shift.start.format(timeFormatter)}-${shift.end.format(timeFormatter)} ${shift.label}", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (nextWeekDaysOff.isNotEmpty()) {
+                        Text("Days off: ${nextWeekDaysOff.joinToString { it.format(shortDateFormatter) }}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
+                    }
+                }
+            }
+        }
+        item {
+            WeeklySectionCard("Actions") {
+                Button(
+                    onClick = {
+                        shareText(context, "Workday Planner weekly summary", buildWeeklyReviewExport(state, today))
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Export/share weekly summary")
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = onAddTaskNextWeek, modifier = Modifier.weight(1f)) { Text("Add task") }
+                    OutlinedButton(onClick = onReviewSchedule, modifier = Modifier.weight(1f)) { Text("Review schedule") }
+                }
+                OutlinedButton(onClick = onClearCompletedTasks, modifier = Modifier.fillMaxWidth()) {
+                    Text("Clear completed tasks")
+                }
+                message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeeklySectionCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            content()
+        }
+    }
+}
+
+@Composable
+private fun WeeklyMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        modifier = modifier
+    ) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+private fun buildWeeklyReviewExport(state: AppState, dateInWeek: LocalDate): String {
+    val weekStart = dateInWeek.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    val weekEnd = weekStart.plusDays(6)
+    val nextWeekStart = weekStart.plusWeeks(1)
+    val nextWeekEnd = nextWeekStart.plusDays(6)
+    val weekShifts = state.shifts.filter { it.date in weekStart..weekEnd }
+    val nextWeekShifts = state.shifts.filter { it.date in nextWeekStart..nextWeekEnd }.sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start })
+    val daysOff = state.daysOff.filter { it in weekStart..weekEnd }.sorted()
+    val weekTasks = state.tasks.filter { task ->
+        task.deadline?.toLocalDate()?.let { it in weekStart..weekEnd } == true ||
+            task.completionHistory.any { it.toLocalDate() in weekStart..weekEnd }
+    }
+    val completed = weekTasks.count { task -> task.completed || task.completionHistory.any { it.toLocalDate() in weekStart..weekEnd } }
+    val missed = weekTasks.count { !it.completed && taskIsOverdueInWeek(it, weekEnd) }
+    val scheduled = PayEstimator.estimateWeek(state, dateInWeek)
+    val actual = TimecardCalculator.summarizeWeek(state, dateInWeek)
+    val actualPay = PayEstimator.estimateActualWeek(state, dateInWeek)
+    val noteLines = state.timecards.filter { it.date in weekStart..weekEnd && it.hasIssueNote() }.flatMap { entry ->
+        listOf(entry.note, entry.missedPunchNote, entry.payIssueNote)
+            .filter { it.isNotBlank() }
+            .map { "${entry.date.format(shortDateFormatter)}: $it" }
+    }
+    return buildString {
+        appendLine("Workday Planner weekly review")
+        appendLine("For your personal records only.")
+        appendLine("${weekStart.format(shortDateFormatter)} - ${weekEnd.format(shortDateFormatter)}")
+        appendLine()
+        appendLine("This week")
+        appendLine("Shifts scheduled/worked: ${weekShifts.size}")
+        appendLine("Days off: ${daysOff.size}")
+        appendLine("Scheduled hours: ${scheduled.scheduledHours.toSimpleString()}")
+        appendLine("Actual hours: ${actual.workedHours.toSimpleString()}")
+        appendLine("Paid hours: ${actual.paidHours.toSimpleString()}")
+        appendLine("Estimated pay: $${(if (actual.paidHours > 0.0) actualPay.grossPay else scheduled.grossPay).toMoneyString()}")
+        appendLine("Overtime estimate: ${maxOf(scheduled.overtimeHours, actual.overtimeHours).toSimpleString()}")
+        appendLine()
+        appendLine("Tasks")
+        appendLine("Completed: $completed")
+        appendLine("Missed/overdue: $missed")
+        appendLine()
+        appendLine("Notes/issues")
+        if (noteLines.isEmpty()) appendLine("None") else noteLines.forEach(::appendLine)
+        appendLine()
+        appendLine("Next week")
+        if (nextWeekShifts.isEmpty()) {
+            appendLine("No shifts saved.")
+        } else {
+            nextWeekShifts.take(8).forEach { shift ->
+                appendLine("${shift.date.format(shortDateFormatter)} ${shift.start.format(timeFormatter)}-${shift.end.format(timeFormatter)} ${shift.label}")
+            }
+        }
+    }
+}
+
+private fun taskIsOverdueInWeek(task: TaskItem, weekEnd: LocalDate): Boolean {
+    val deadline = task.deadline ?: return false
+    return deadline.toLocalDate() <= weekEnd && deadline.isBefore(LocalDateTime.now())
+}
+
+private operator fun ClosedRange<LocalDate>.contains(date: LocalDate): Boolean =
+    !date.isBefore(start) && !date.isAfter(endInclusive)
+
+private fun shareText(context: android.content.Context, title: String, text: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, title)
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    context.startActivity(Intent.createChooser(intent, title))
 }
 
 private fun Double.toSignedHours(): String {
@@ -2370,12 +3205,22 @@ private fun decodeWorkImage(path: String): android.graphics.Bitmap? {
 private fun DailyNotesSection(
     todayNotes: List<WorkNote>,
     recentNotes: List<WorkNote>,
-    onAddNote: (String) -> Unit,
+    shifts: List<WorkShift>,
+    onSaveNote: (WorkNote) -> Unit,
     onDeleteNote: (String) -> Unit,
-    onCreateTaskFromNote: (String) -> Unit
+    onCreateTaskFromNote: (String) -> Unit,
+    onCreateChecklistFromNote: (String) -> Unit,
+    onTogglePinned: (String) -> Unit,
+    onToggleArchived: (String) -> Unit
 ) {
     val context = LocalContext.current
+    var noteTitle by remember { mutableStateOf("") }
     var noteText by remember { mutableStateOf("") }
+    var noteKind by remember { mutableStateOf(WorkNoteKind.ShiftNote) }
+    var voiceType by remember { mutableStateOf(WorkVoiceCaptureType.ShiftNote) }
+    var rawVoiceTranscript by remember { mutableStateOf("") }
+    var linkedShiftId by remember { mutableStateOf<String?>(null) }
+    var pinned by remember { mutableStateOf(false) }
     var selectedKind by remember { mutableStateOf<WorkNoteKind?>(null) }
     var searchText by remember { mutableStateOf("") }
     var listening by remember { mutableStateOf(false) }
@@ -2394,9 +3239,13 @@ private fun DailyNotesSection(
         }
     }
 
-    fun appendVoiceText(text: String) {
+    fun applyVoiceTranscript(text: String) {
         if (text.isBlank()) return
-        noteText = listOf(noteText.trim(), text.trim()).filter { it.isNotBlank() }.joinToString(" ")
+        rawVoiceTranscript = text.trim()
+        val result = WorkVoiceCaptureParser.format(rawVoiceTranscript, voiceType)
+        noteTitle = result.title
+        noteText = result.cleanedText
+        noteKind = result.kind
     }
 
     fun startVoiceCapture() {
@@ -2415,7 +3264,7 @@ private fun DailyNotesSection(
         recognizer.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak your work note")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak your ${voiceType.label.lowercase()}")
         })
     }
 
@@ -2442,7 +3291,7 @@ private fun DailyNotesSection(
                 listening = false
                 val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                 liveVoiceText = text
-                appendVoiceText(text)
+                applyVoiceTranscript(text)
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
@@ -2467,7 +3316,59 @@ private fun DailyNotesSection(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SectionHeader("Daily work notes", "Smart tags organize notes automatically on this device.")
+            SectionHeader("Work notes", "Shift handoffs, orders, training, reminders, and pay/timecard notes.")
+            Text(
+                "General voice notes and personal notes belong in NotePilot. Keep this area focused on work records.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                workNoteKinds.forEach { kind ->
+                    FilterChip(selected = noteKind == kind, onClick = { noteKind = kind }, label = { Text(kind.label) })
+                }
+            }
+            Text("Work voice capture", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Use this for orders, shift notes, handoffs, tasks, truck, inventory, and reminders only.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                WorkVoiceCaptureType.entries.forEach { type ->
+                    FilterChip(
+                        selected = voiceType == type,
+                        onClick = {
+                            voiceType = type
+                            noteKind = type.noteKind
+                            if (rawVoiceTranscript.isNotBlank()) {
+                                val result = WorkVoiceCaptureParser.format(rawVoiceTranscript, type)
+                                noteTitle = result.title
+                                noteText = result.cleanedText
+                                noteKind = result.kind
+                            }
+                        },
+                        label = { Text(type.label) }
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = {
+                        noteKind = WorkNoteKind.ManagerHandoff
+                        noteTitle = "Manager handoff"
+                        noteText = WorkNoteTemplates.managerHandoff
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Handoff template") }
+                OutlinedButton(
+                    onClick = {
+                        noteKind = WorkNoteKind.OrderNote
+                        noteTitle = "Order note"
+                        noteText = WorkNoteTemplates.orderNote
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Order template") }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 if (listening) {
                     Button(
@@ -2486,15 +3387,16 @@ private fun DailyNotesSection(
                     Button(onClick = { startVoiceCapture() }, modifier = Modifier.weight(1f)) {
                         Icon(Icons.Default.Mic, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Voice note")
+                        Text("Capture voice")
                     }
                 }
                 OutlinedButton(
                     onClick = {
                         liveVoiceText = ""
+                        rawVoiceTranscript = ""
                         voiceError = null
                     },
-                    enabled = liveVoiceText.isNotBlank() || voiceError != null,
+                    enabled = liveVoiceText.isNotBlank() || rawVoiceTranscript.isNotBlank() || voiceError != null,
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Clear voice")
@@ -2517,30 +3419,92 @@ private fun DailyNotesSection(
                     }
                 }
             }
+            if (rawVoiceTranscript.isNotBlank()) {
+                OutlinedTextField(
+                    value = rawVoiceTranscript,
+                    onValueChange = { rawVoiceTranscript = it },
+                    label = { Text("Raw transcript") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedButton(
+                    onClick = {
+                        val result = WorkVoiceCaptureParser.format(rawVoiceTranscript, voiceType)
+                        noteTitle = result.title
+                        noteText = result.cleanedText
+                        noteKind = result.kind
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Format transcript")
+                }
+            }
+            OutlinedTextField(
+                value = noteTitle,
+                onValueChange = { noteTitle = it },
+                label = { Text("Title") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
             OutlinedTextField(
                 value = noteText,
                 onValueChange = { noteText = it },
-                label = { Text("Add a note from today") },
+                label = { Text("Body") },
                 placeholder = { Text("Example: Frozen order short 2 cases, follow up tomorrow") },
-                minLines = 2,
+                minLines = 4,
                 modifier = Modifier.fillMaxWidth()
             )
+            if (shifts.isNotEmpty()) {
+                Text("Linked shift", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = linkedShiftId == null, onClick = { linkedShiftId = null }, label = { Text("None") })
+                    shifts.sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start }).take(8).forEach { shift ->
+                        FilterChip(
+                            selected = linkedShiftId == shift.id,
+                            onClick = { linkedShiftId = shift.id },
+                            label = { Text("${shift.date.format(shortDateFormatter)} ${shift.start.format(timeFormatter)}") }
+                        )
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Pinned", style = MaterialTheme.typography.bodyMedium)
+                    Text("Keep this work note at the top.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = pinned, onCheckedChange = { pinned = it })
+            }
             Button(
-                enabled = noteText.isNotBlank(),
+                enabled = noteText.isNotBlank() || noteTitle.isNotBlank(),
                 onClick = {
-                    onAddNote(noteText)
+                    onSaveNote(
+                        WorkNoteOrganizer.create(
+                            text = noteText,
+                            title = noteTitle,
+                            kindOverride = noteKind,
+                            linkedShiftId = linkedShiftId,
+                            pinned = pinned,
+                            rawTranscript = rawVoiceTranscript
+                        )
+                    )
+                    noteTitle = ""
                     noteText = ""
+                    noteKind = WorkNoteKind.ShiftNote
+                    voiceType = WorkVoiceCaptureType.ShiftNote
+                    rawVoiceTranscript = ""
+                    linkedShiftId = null
+                    pinned = false
                     liveVoiceText = ""
                     voiceError = null
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Save note")
+                Text("Save work note")
             }
             val notesToShow = todayNotes + recentNotes
-            val issueCount = notesToShow.count { it.kind == WorkNoteKind.Issue }
-            val followUpCount = notesToShow.count { it.kind == WorkNoteKind.FollowUp }
-            val orderCount = notesToShow.count { it.kind == WorkNoteKind.Order }
+            val issueCount = notesToShow.count { it.kind in setOf(WorkNoteKind.Issue, WorkNoteKind.PayTimecardNote) }
+            val followUpCount = notesToShow.count { it.kind in setOf(WorkNoteKind.FollowUp, WorkNoteKind.ReminderNote, WorkNoteKind.ManagerHandoff) }
+            val orderCount = notesToShow.count { it.kind in setOf(WorkNoteKind.Order, WorkNoteKind.OrderNote, WorkNoteKind.TruckNote, WorkNoteKind.InventoryNote) }
             if (notesToShow.isNotEmpty()) {
                 Text(
                     buildList {
@@ -2580,6 +3544,7 @@ private fun DailyNotesSection(
             val filteredByKind = selectedKind?.let { kind -> notesToShow.filter { it.kind == kind } } ?: notesToShow
             val filteredNotes = filteredByKind.filter { note ->
                 searchText.isBlank() ||
+                    note.title.contains(searchText, ignoreCase = true) ||
                     note.text.contains(searchText, ignoreCase = true) ||
                     note.kind.label.contains(searchText, ignoreCase = true) ||
                     note.tags.any { it.contains(searchText, ignoreCase = true) }
@@ -2595,6 +3560,9 @@ private fun DailyNotesSection(
                     WorkNoteCard(
                         note = note,
                         onMakeTask = { onCreateTaskFromNote(note.id) },
+                        onMakeChecklist = { onCreateChecklistFromNote(note.id) },
+                        onTogglePinned = { onTogglePinned(note.id) },
+                        onArchive = { onToggleArchived(note.id) },
                         onDelete = { onDeleteNote(note.id) }
                     )
                 }
@@ -2605,7 +3573,14 @@ private fun DailyNotesSection(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun WorkNoteCard(note: WorkNote, onMakeTask: () -> Unit, onDelete: () -> Unit) {
+private fun WorkNoteCard(
+    note: WorkNote,
+    onMakeTask: () -> Unit,
+    onMakeChecklist: () -> Unit,
+    onTogglePinned: () -> Unit,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
         modifier = Modifier.fillMaxWidth()
@@ -2613,9 +3588,10 @@ private fun WorkNoteCard(note: WorkNote, onMakeTask: () -> Unit, onDelete: () ->
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(note.kind.label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                    Text(note.date.format(dateFormatter), style = MaterialTheme.typography.bodySmall)
+                    Text(note.title.ifBlank { note.kind.label }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text("${note.kind.label} | ${note.date.format(dateFormatter)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                if (note.pinned) AssistChip(onClick = {}, label = { Text("Pinned") })
             }
             Text(note.text, style = MaterialTheme.typography.bodyMedium)
             if (note.tags.isNotEmpty()) {
@@ -2629,7 +3605,18 @@ private fun WorkNoteCard(note: WorkNote, onMakeTask: () -> Unit, onDelete: () ->
                 OutlinedButton(onClick = onMakeTask, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Add, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Make task")
+                    Text("Task")
+                }
+                OutlinedButton(onClick = onMakeChecklist, modifier = Modifier.weight(1f)) {
+                    Text("Checklist")
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onTogglePinned, modifier = Modifier.weight(1f)) {
+                    Text(if (note.pinned) "Unpin" else "Pin")
+                }
+                OutlinedButton(onClick = onArchive, modifier = Modifier.weight(1f)) {
+                    Text("Archive")
                 }
                 OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Delete, contentDescription = null)
@@ -2812,7 +3799,7 @@ private fun TaskDetailScreen(
     var linkedShiftId by remember(task?.id) { mutableStateOf(task?.linkedShiftId) }
     var linkedShiftType by remember(task?.id) { mutableStateOf(task?.linkedShiftType ?: LinkedShiftType.Any) }
     var timingRule by remember(task?.id) { mutableStateOf(task?.timingRule ?: TaskTimingRule.AtTime) }
-    var carryOverBehavior by remember(task?.id) { mutableStateOf(task?.carryOverBehavior ?: CarryOverBehavior.None) }
+    var carryOverBehavior by remember(task?.id) { mutableStateOf(task?.carryOverBehavior ?: CarryOverBehavior.KeepOverdue) }
     var alarmOffsetMinutes by remember(task?.id) { mutableStateOf((task?.alarmOffsetMinutes ?: 30).toString()) }
     var completed by remember(task?.id) { mutableStateOf(task?.completed ?: false) }
     var showAdvancedRepeat by remember(task?.id) { mutableStateOf(task?.repeatRule == RepeatRule.CustomDays) }
@@ -2847,7 +3834,7 @@ private fun TaskDetailScreen(
         linkedShiftId = null
         linkedShiftType = LinkedShiftType.Any
         timingRule = TaskTimingRule.AtTime
-        carryOverBehavior = CarryOverBehavior.None
+        carryOverBehavior = CarryOverBehavior.KeepOverdue
         alarmOffsetMinutes = "30"
         completed = false
         showAdvancedRepeat = false
@@ -2974,11 +3961,19 @@ private fun TaskDetailScreen(
                             deadline = it.minusMinutes(alarmOffsetMinutes.toLongOrNull() ?: 30)
                             alarmAt = deadline
                         }
-                        TaskTimingRule.DuringShift -> nextShift?.let {
-                            deadline = it.plusMinutes(30)
+                        TaskTimingRule.AfterShiftStarts -> nextShift?.let {
+                            deadline = it.plusMinutes(alarmOffsetMinutes.toLongOrNull() ?: 30)
                             alarmAt = deadline
                         }
-                        TaskTimingRule.AfterShift -> {
+                        TaskTimingRule.BeforeShiftEnds -> {
+                            val shift = state.shifts.filter { it.date.atTime(it.start).isAfter(LocalDateTime.now()) }.minWithOrNull(compareBy<WorkShift> { it.date }.thenBy { it.start })
+                            shift?.let {
+                                val end = it.date.atTime(it.end).let { endTime -> if (it.end.isBefore(it.start)) endTime.plusDays(1) else endTime }
+                                deadline = end.minusMinutes(alarmOffsetMinutes.toLongOrNull() ?: 30)
+                                alarmAt = deadline
+                            }
+                        }
+                        TaskTimingRule.AfterShiftEnds -> {
                             val shift = state.shifts.filter { it.date.atTime(it.start).isAfter(LocalDateTime.now()) }.minWithOrNull(compareBy<WorkShift> { it.date }.thenBy { it.start })
                             shift?.let {
                                 val end = it.date.atTime(it.end).let { endTime -> if (it.end.isBefore(it.start)) endTime.plusDays(1) else endTime }
@@ -2986,10 +3981,24 @@ private fun TaskDetailScreen(
                                 alarmAt = deadline
                             }
                         }
+                        TaskTimingRule.MorningOfWorkday -> {
+                            skipDaysOff = true
+                            deadline = deadline.toLocalDate().atTime(8, 0)
+                            alarmAt = deadline.minusMinutes(alarmOffsetMinutes.toLongOrNull() ?: 30)
+                        }
+                        TaskTimingRule.NightBeforeShift -> nextShift?.let {
+                            deadline = it.minusDays(1).withHour(20).withMinute(0)
+                            alarmAt = deadline.minusMinutes(alarmOffsetMinutes.toLongOrNull() ?: 30)
+                        }
+                        TaskTimingRule.DaysOffOnly -> {
+                            skipDaysOff = false
+                            deadline = deadline.toLocalDate().atTime(10, 0)
+                            alarmAt = deadline.minusMinutes(alarmOffsetMinutes.toLongOrNull() ?: 30)
+                        }
                         TaskTimingRule.WorkdaysOnly -> skipDaysOff = true
                     }
                 })
-                if (timingRule == TaskTimingRule.AtTime || timingRule == TaskTimingRule.WorkdaysOnly) {
+                if (timingRule in setOf(TaskTimingRule.AtTime, TaskTimingRule.WorkdaysOnly, TaskTimingRule.MorningOfWorkday, TaskTimingRule.DaysOffOnly)) {
                     DateTimeRow("Deadline", deadline, onChanged = { deadline = it })
                 } else {
                     Text("The exact reminder time will follow your saved shift schedule.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -3004,7 +4013,7 @@ private fun TaskDetailScreen(
                     Switch(checked = reminderEnabled, onCheckedChange = { reminderEnabled = it })
                 }
                 if (reminderEnabled) {
-                    if (timingRule == TaskTimingRule.AtTime || timingRule == TaskTimingRule.WorkdaysOnly) {
+                    if (timingRule in setOf(TaskTimingRule.AtTime, TaskTimingRule.WorkdaysOnly, TaskTimingRule.MorningOfWorkday, TaskTimingRule.DaysOffOnly)) {
                         DateTimeRow("Reminder time", alarmAt, onChanged = { alarmAt = it })
                     }
                     OutlinedTextField(
@@ -3039,6 +4048,7 @@ private fun TaskDetailScreen(
                         RepeatRule.OpeningShifts -> LinkedShiftType.Opening
                         RepeatRule.ClosingShifts -> LinkedShiftType.Closing
                         RepeatRule.TruckDays -> LinkedShiftType.Truck
+                        RepeatRule.InventoryDays -> LinkedShiftType.Inventory
                         else -> linkedShiftType
                     }
                 })
@@ -3110,10 +4120,10 @@ private fun TaskDetailScreen(
 
 private val builtInTaskTemplates = listOf(
     TaskTemplate(id = "builtin-opening-checklist", name = "Opening shift checklist", title = "Opening shift checklist", notes = "Unlock/setup, check schedule, prep station, and note issues.", category = TaskCategory.Prep, priority = TaskPriority.High, repeatRule = RepeatRule.OpeningShifts, linkedShiftType = LinkedShiftType.Opening, timingRule = TaskTimingRule.BeforeNextShift, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
-    TaskTemplate(id = "builtin-closing-checklist", name = "Closing shift checklist", title = "Closing shift checklist", notes = "Clean area, finish closing tasks, and leave notes for next shift.", category = TaskCategory.Cleaning, priority = TaskPriority.High, repeatRule = RepeatRule.ClosingShifts, linkedShiftType = LinkedShiftType.Closing, timingRule = TaskTimingRule.DuringShift, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
+    TaskTemplate(id = "builtin-closing-checklist", name = "Closing shift checklist", title = "Closing shift checklist", notes = "Clean area, finish closing tasks, and leave notes for next shift.", category = TaskCategory.Cleaning, priority = TaskPriority.High, repeatRule = RepeatRule.ClosingShifts, linkedShiftType = LinkedShiftType.Closing, timingRule = TaskTimingRule.BeforeShiftEnds, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
     TaskTemplate(id = "builtin-truck-checklist", name = "Truck/order day checklist", title = "Truck/order day checklist", notes = "Check order, truck notes, inventory gaps, and follow-up items.", category = TaskCategory.Orders, priority = TaskPriority.High, repeatRule = RepeatRule.TruckDays, linkedShiftType = LinkedShiftType.Truck, timingRule = TaskTimingRule.BeforeNextShift, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
-    TaskTemplate(id = "builtin-inventory-checklist", name = "Inventory day checklist", title = "Inventory day checklist", notes = "Counts, outs, order review, and shrink notes.", category = TaskCategory.Orders, priority = TaskPriority.High, linkedShiftType = LinkedShiftType.Inventory, timingRule = TaskTimingRule.BeforeNextShift, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
-    TaskTemplate(id = "builtin-manager-handoff", name = "Manager handoff checklist", title = "Manager handoff checklist", notes = "Open issues, unfinished tasks, associate follow-up, and schedule notes.", category = TaskCategory.Admin, priority = TaskPriority.High, timingRule = TaskTimingRule.AfterShift, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
+    TaskTemplate(id = "builtin-inventory-checklist", name = "Inventory day checklist", title = "Inventory day checklist", notes = "Counts, outs, order review, and shrink notes.", category = TaskCategory.Orders, priority = TaskPriority.High, repeatRule = RepeatRule.InventoryDays, linkedShiftType = LinkedShiftType.Inventory, timingRule = TaskTimingRule.BeforeNextShift, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
+    TaskTemplate(id = "builtin-manager-handoff", name = "Manager handoff checklist", title = "Manager handoff checklist", notes = "Open issues, unfinished tasks, associate follow-up, and schedule notes.", category = TaskCategory.Admin, priority = TaskPriority.High, timingRule = TaskTimingRule.AfterShiftEnds, carryOverBehavior = CarryOverBehavior.NextWorkday, builtIn = true),
     TaskTemplate(id = "builtin-pre-work", name = "Personal pre-work checklist", title = "Personal pre-work checklist", notes = "Uniform, lunch, keys/wallet, and anything needed before leaving.", category = TaskCategory.Personal, priority = TaskPriority.Normal, repeatRule = RepeatRule.EveryWorkday, timingRule = TaskTimingRule.BeforeNextShift, linkedShiftType = LinkedShiftType.Any, builtIn = true),
     TaskTemplate(id = "builtin-bring-uniform", name = "Bring uniform", title = "Bring uniform", category = TaskCategory.Personal, repeatRule = RepeatRule.EveryWorkday, timingRule = TaskTimingRule.BeforeNextShift, builtIn = true),
     TaskTemplate(id = "builtin-pack-lunch", name = "Pack lunch", title = "Pack lunch", category = TaskCategory.Personal, priority = TaskPriority.Low, repeatRule = RepeatRule.EveryWorkday, timingRule = TaskTimingRule.BeforeNextShift, builtIn = true),
@@ -3293,7 +4303,8 @@ private fun RepeatRuleChips(selected: RepeatRule, onSelected: (RepeatRule) -> Un
         RepeatRule.EveryWorkday,
         RepeatRule.OpeningShifts,
         RepeatRule.ClosingShifts,
-        RepeatRule.TruckDays
+        RepeatRule.TruckDays,
+        RepeatRule.InventoryDays
     ) +
         listOfNotNull(RepeatRule.CustomDays.takeIf { selected == RepeatRule.CustomDays })
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -4177,6 +5188,7 @@ private fun android.content.Context.hasCalendarPermission(): Boolean {
 private fun ScheduleScreen(
     state: AppState,
     onAddShift: (WorkShift) -> Unit,
+    onAddTask: (TaskItem) -> Unit,
     onDeleteShift: (String) -> Unit,
     onSaveShiftTemplate: (ShiftTemplate) -> Unit,
     onDeleteShiftTemplate: (String) -> Unit,
@@ -4231,8 +5243,18 @@ private fun ScheduleScreen(
                     scheduleMessage = "Day off added."
                     showAddShift = false
                 },
-                onSave = {
-                    onAddShift(it)
+                onSave = { shift, template ->
+                    onAddShift(shift)
+                    template?.let { selectedTemplate ->
+                        tasksForShiftTemplate(shift, selectedTemplate).forEach(onAddTask)
+                    }
+                    scheduleMessage = template?.let { selectedTemplate ->
+                        if (selectedTemplate.defaultTasks.isNotEmpty() || selectedTemplate.defaultReminders.isNotEmpty()) {
+                            "${selectedTemplate.name} shift added with template tasks."
+                        } else {
+                            "${selectedTemplate.name} shift added."
+                        }
+                    } ?: "Shift added."
                     showAddShift = false
                 },
                 onSaveTemplate = onSaveShiftTemplate,
@@ -4393,7 +5415,7 @@ private fun ScheduleOverviewCard(state: AppState) {
 private fun AddShiftCard(
     templates: List<ShiftTemplate>,
     onAddDayOff: (LocalDate, ShiftTemplateKind) -> Unit,
-    onSave: (WorkShift) -> Unit,
+    onSave: (WorkShift, ShiftTemplate?) -> Unit,
     onSaveTemplate: (ShiftTemplate) -> Unit,
     onDeleteTemplate: (String) -> Unit,
     onCancel: () -> Unit
@@ -4401,6 +5423,7 @@ private fun AddShiftCard(
     var title by remember { mutableStateOf("Work") }
     var location by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
+    var selectedTemplate by remember { mutableStateOf<ShiftTemplate?>(null) }
     var startsAt by remember { mutableStateOf(LocalDate.now().atTime(9, 0)) }
     var endsAt by remember { mutableStateOf(startsAt.plusHours(8)) }
     Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
@@ -4409,13 +5432,17 @@ private fun AddShiftCard(
             ShiftTemplateChips(
                 templates = templates,
                 onApply = { template ->
+                    selectedTemplate = template
                     if (template.kind != ShiftTemplateKind.Work) {
                         onAddDayOff(startsAt.toLocalDate(), template.kind)
                         return@ShiftTemplateChips
                     }
                     title = template.label
                     location = template.location
-                    notes = template.notes
+                    notes = buildList {
+                        if (template.notes.isNotBlank()) add(template.notes)
+                        if (template.unpaidBreakMinutes > 0) add("Default unpaid break: ${template.unpaidBreakMinutes} min")
+                    }.joinToString("\n")
                     startsAt = startsAt.toLocalDate().atTime(template.start)
                     endsAt = startsAt.toLocalDate().atTime(template.end).let { if (template.end.isBefore(template.start)) it.plusDays(1) else it }
                 },
@@ -4435,16 +5462,15 @@ private fun AddShiftCard(
                 Button(
                     enabled = title.isNotBlank() && endsAt.isAfter(startsAt),
                     onClick = {
-                        onSave(
-                            WorkShift(
-                                date = startsAt.toLocalDate(),
-                                start = startsAt.toLocalTime(),
-                                end = endsAt.toLocalTime(),
-                                label = title.trim(),
-                                location = location.trim(),
-                                notes = notes.trim()
-                            )
+                        val shift = WorkShift(
+                            date = startsAt.toLocalDate(),
+                            start = startsAt.toLocalTime(),
+                            end = endsAt.toLocalTime(),
+                            label = title.trim(),
+                            location = location.trim(),
+                            notes = notes.trim()
                         )
+                        onSave(shift, selectedTemplate)
                     },
                     modifier = Modifier.weight(1f)
                 ) { Text("Save shift") }
@@ -4455,17 +5481,82 @@ private fun AddShiftCard(
 }
 
 private val builtInShiftTemplates = listOf(
-    ShiftTemplate(id = "builtin-opening-shift", name = "Opening shift", label = "Opening shift", start = LocalTime.of(6, 0), end = LocalTime.of(14, 0), notes = "Opening setup and first shift tasks.", builtIn = true),
-    ShiftTemplate(id = "builtin-closing-shift", name = "Closing shift", label = "Closing shift", start = LocalTime.of(14, 0), end = LocalTime.of(22, 0), notes = "Closing cleanup and handoff.", builtIn = true),
-    ShiftTemplate(id = "builtin-mid-shift", name = "Mid shift", label = "Mid shift", start = LocalTime.of(10, 0), end = LocalTime.of(18, 0), builtIn = true),
-    ShiftTemplate(id = "builtin-truck-order", name = "Truck/order day", label = "Truck/order day", start = LocalTime.of(7, 0), end = LocalTime.of(15, 0), notes = "Truck, ordering, or delivery follow-up.", builtIn = true),
-    ShiftTemplate(id = "builtin-inventory", name = "Inventory day", label = "Inventory day", start = LocalTime.of(8, 0), end = LocalTime.of(16, 0), notes = "Inventory count and order checks.", builtIn = true),
-    ShiftTemplate(id = "builtin-day-off", name = "Day off", label = "Day off", kind = ShiftTemplateKind.DayOff, builtIn = true),
-    ShiftTemplate(id = "builtin-vacation", name = "Vacation", label = "Vacation", kind = ShiftTemplateKind.Vacation, builtIn = true),
-    ShiftTemplate(id = "builtin-sick-day", name = "Sick day", label = "Sick day", kind = ShiftTemplateKind.Sick, builtIn = true)
+    ShiftTemplate(
+        id = "builtin-opening-shift",
+        name = "Opening",
+        label = "Opening shift",
+        start = LocalTime.of(6, 0),
+        end = LocalTime.of(14, 0),
+        notes = "Opening setup and first shift tasks.",
+        status = "Workday",
+        colorHex = "#C05621",
+        defaultTasks = listOf("Check dates", "Fill case", "Review orders", "Prep department"),
+        defaultReminders = listOf("Opening shift prep"),
+        linkedShiftType = LinkedShiftType.Opening,
+        builtIn = true
+    ),
+    ShiftTemplate(
+        id = "builtin-closing-shift",
+        name = "Closing",
+        label = "Closing shift",
+        start = LocalTime.of(14, 0),
+        end = LocalTime.of(22, 0),
+        notes = "Closing cleanup and manager handoff.",
+        status = "Workday",
+        colorHex = "#6B5A45",
+        defaultTasks = listOf("Clean slicer", "Pull dates", "Fill grab-and-go", "Sweep/mop", "Manager handoff note"),
+        defaultReminders = listOf("Start closing tasks"),
+        linkedShiftType = LinkedShiftType.Closing,
+        builtIn = true
+    ),
+    ShiftTemplate(id = "builtin-mid-shift", name = "Mid shift", label = "Mid shift", start = LocalTime.of(10, 0), end = LocalTime.of(18, 0), status = "Workday", colorHex = "#3F4E46", defaultTasks = listOf("Check schedule", "Restock station"), linkedShiftType = LinkedShiftType.Mid, builtIn = true),
+    ShiftTemplate(id = "builtin-truck-order", name = "Truck day", label = "Truck day", start = LocalTime.of(7, 0), end = LocalTime.of(15, 0), notes = "Truck, ordering, or delivery follow-up.", status = "Truck", colorHex = "#D89A22", defaultTasks = listOf("Check order", "Note shorts", "Update inventory", "Follow up on vendor issues"), defaultReminders = listOf("Truck/order follow-up"), linkedShiftType = LinkedShiftType.Truck, builtIn = true),
+    ShiftTemplate(id = "builtin-inventory", name = "Inventory", label = "Inventory", start = LocalTime.of(8, 0), end = LocalTime.of(16, 0), notes = "Inventory count and order checks.", status = "Inventory", colorHex = "#2F6F4E", defaultTasks = listOf("Count priority items", "Check outs", "Review order needs"), linkedShiftType = LinkedShiftType.Inventory, builtIn = true),
+    ShiftTemplate(id = "builtin-training", name = "Training day", label = "Training day", start = LocalTime.of(9, 0), end = LocalTime.of(17, 0), notes = "Associate training and CBT follow-up.", status = "Training", colorHex = "#465A64", defaultTasks = listOf("Check training list", "Follow up with associates", "Update completion notes"), linkedShiftType = LinkedShiftType.Training, builtIn = true),
+    ShiftTemplate(id = "builtin-manager-shift", name = "Manager shift", label = "Manager shift", start = LocalTime.of(8, 0), end = LocalTime.of(17, 0), notes = "Manager walk, handoff, schedule, and team follow-up.", status = "Manager", colorHex = "#6D3A7A", defaultTasks = listOf("Review staffing", "Check training follow-ups", "Manager handoff note"), linkedShiftType = LinkedShiftType.Manager, builtIn = true),
+    ShiftTemplate(id = "builtin-day-off", name = "Day off", label = "Day off", status = "Day off", colorHex = "#3F4E46", kind = ShiftTemplateKind.DayOff, unpaidBreakMinutes = 0, builtIn = true),
+    ShiftTemplate(id = "builtin-vacation", name = "Vacation", label = "Vacation", status = "Vacation", colorHex = "#3F4E46", kind = ShiftTemplateKind.Vacation, unpaidBreakMinutes = 0, builtIn = true),
+    ShiftTemplate(id = "builtin-sick-day", name = "Sick day", label = "Sick day", status = "Sick", colorHex = "#C2413A", kind = ShiftTemplateKind.Sick, unpaidBreakMinutes = 0, builtIn = true),
+    ShiftTemplate(id = "builtin-custom-shift", name = "Custom", label = "Custom shift", start = LocalTime.of(9, 0), end = LocalTime.of(17, 0), notes = "Custom shift template.", status = "Workday", colorHex = "#C05621", linkedShiftType = LinkedShiftType.Any, builtIn = true)
 )
 
 private fun shiftTemplatesFor(state: AppState): List<ShiftTemplate> = builtInShiftTemplates + state.shiftTemplates
+
+private fun tasksForShiftTemplate(shift: WorkShift, template: ShiftTemplate): List<TaskItem> {
+    val start = shift.date.atTime(shift.start)
+    val end = shift.date.atTime(shift.end).let { if (shift.end.isBefore(shift.start)) it.plusDays(1) else it }
+    val defaultTasks = template.defaultTasks.mapIndexed { index, title ->
+        TaskItem(
+            title = title,
+            notes = "From ${template.name} shift template.",
+            category = if (template.linkedShiftType == LinkedShiftType.Truck || template.linkedShiftType == LinkedShiftType.Inventory) TaskCategory.Orders else TaskCategory.General,
+            priority = if (index == 0) TaskPriority.High else TaskPriority.Normal,
+            deadline = if (template.linkedShiftType == LinkedShiftType.Closing) end.minusMinutes(30) else start.plusMinutes((index * 15L).coerceAtMost(90)),
+            alarmAt = null,
+            workRelated = true,
+            linkedShiftId = shift.id,
+            linkedShiftType = template.linkedShiftType,
+            timingRule = if (template.linkedShiftType == LinkedShiftType.Closing) TaskTimingRule.BeforeShiftEnds else TaskTimingRule.AfterShiftStarts,
+            skipDaysOff = true
+        )
+    }
+    val reminders = template.defaultReminders.map { title ->
+        TaskItem(
+            title = title,
+            notes = "Reminder from ${template.name} shift template.",
+            category = TaskCategory.Admin,
+            priority = TaskPriority.High,
+            deadline = start.minusMinutes(30),
+            alarmAt = start.minusMinutes(30),
+            workRelated = true,
+            linkedShiftId = shift.id,
+            linkedShiftType = template.linkedShiftType,
+            timingRule = TaskTimingRule.BeforeNextShift,
+            skipDaysOff = true
+        )
+    }
+    return defaultTasks + reminders
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -4486,18 +5577,48 @@ private fun ShiftTemplateChips(
             }) { Text(if (editorOpen) "Hide" else "Create") }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            templates.forEach { template ->
+            templates.filter { it.enabled }.forEach { template ->
                 OutlinedButton(onClick = { onApply(template) }) { Text(template.name) }
             }
         }
-        templates.filterNot { it.builtIn }.forEach { template ->
+        Text("Manage templates", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        templates.forEach { template ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(template.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                Column(Modifier.weight(1f)) {
+                    Text(template.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        buildList {
+                            add(template.status)
+                            if (template.defaultTasks.isNotEmpty()) add("${template.defaultTasks.size} tasks")
+                            if (template.defaultReminders.isNotEmpty()) add("${template.defaultReminders.size} reminders")
+                            if (!template.enabled) add("Disabled")
+                        }.joinToString(" | "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (!template.builtIn) {
+                    TextButton(onClick = {
+                        editing = template
+                        editorOpen = true
+                    }) { Text("Edit") }
+                }
                 TextButton(onClick = {
-                    editing = template
-                    editorOpen = true
-                }) { Text("Edit") }
-                TextButton(onClick = { onDeleteTemplate(template.id) }) { Text("Delete") }
+                    onSaveTemplate(
+                        template.copy(
+                            id = java.util.UUID.randomUUID().toString(),
+                            name = "${template.name} copy",
+                            builtIn = false,
+                            enabled = true
+                        )
+                    )
+                }) { Text("Duplicate") }
+                if (!template.builtIn) {
+                    TextButton(onClick = { onSaveTemplate(template.copy(enabled = !template.enabled)) }) {
+                        Text(if (template.enabled) "Disable" else "Enable")
+                    }
+                    TextButton(onClick = { onDeleteTemplate(template.id) }) { Text("Delete") }
+                }
             }
         }
         if (editorOpen) {
@@ -4519,6 +5640,13 @@ private fun ShiftTemplateEditor(template: ShiftTemplate?, onSave: (ShiftTemplate
     var label by remember(template?.id) { mutableStateOf(template?.label ?: "Work") }
     var location by remember(template?.id) { mutableStateOf(template?.location.orEmpty()) }
     var notes by remember(template?.id) { mutableStateOf(template?.notes.orEmpty()) }
+    var status by remember(template?.id) { mutableStateOf(template?.status ?: "Workday") }
+    var colorHex by remember(template?.id) { mutableStateOf(template?.colorHex ?: "#C05621") }
+    var defaultTasks by remember(template?.id) { mutableStateOf(template?.defaultTasks?.joinToString("\n").orEmpty()) }
+    var defaultReminders by remember(template?.id) { mutableStateOf(template?.defaultReminders?.joinToString("\n").orEmpty()) }
+    var breakMinutes by remember(template?.id) { mutableStateOf((template?.unpaidBreakMinutes ?: 30).toString()) }
+    var linkedShiftType by remember(template?.id) { mutableStateOf(template?.linkedShiftType ?: LinkedShiftType.Any) }
+    var enabled by remember(template?.id) { mutableStateOf(template?.enabled ?: true) }
     var marksDayOff by remember(template?.id) { mutableStateOf(template?.kind != null && template.kind != ShiftTemplateKind.Work) }
     var startsAt by remember(template?.id) { mutableStateOf(LocalDate.now().atTime(template?.start ?: LocalTime.of(9, 0))) }
     var endsAt by remember(template?.id) { mutableStateOf(LocalDate.now().atTime(template?.end ?: LocalTime.of(17, 0))) }
@@ -4528,6 +5656,8 @@ private fun ShiftTemplateEditor(template: ShiftTemplate?, onSave: (ShiftTemplate
             OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Template name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = label, onValueChange = { label = it }, label = { Text("Role/title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = location, onValueChange = { location = it }, label = { Text("Location") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = status, onValueChange = { status = it }, label = { Text("Status label") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = colorHex, onValueChange = { colorHex = it.take(7) }, label = { Text("Color hex") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = marksDayOff, onCheckedChange = { marksDayOff = it })
                 Text("Marks a day off")
@@ -4535,8 +5665,35 @@ private fun ShiftTemplateEditor(template: ShiftTemplate?, onSave: (ShiftTemplate
             if (!marksDayOff) {
                 DateTimeRow("Starts", startsAt, onChanged = { startsAt = it })
                 DateTimeRow("Ends", endsAt, onChanged = { endsAt = it })
+                OutlinedTextField(
+                    value = breakMinutes,
+                    onValueChange = { breakMinutes = it.filter(Char::isDigit).take(3) },
+                    label = { Text("Default unpaid break minutes") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("Linked task type", style = MaterialTheme.typography.labelLarge)
+                LinkedShiftTypeChips(selected = linkedShiftType, onSelected = { linkedShiftType = it })
             }
             OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = defaultTasks,
+                onValueChange = { defaultTasks = it },
+                label = { Text("Default tasks, one per line") },
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = defaultReminders,
+                onValueChange = { defaultReminders = it },
+                label = { Text("Default reminders, one per line") },
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = enabled, onCheckedChange = { enabled = it })
+                Text("Template enabled")
+            }
             Button(
                 enabled = name.isNotBlank() && label.isNotBlank(),
                 onClick = {
@@ -4549,7 +5706,14 @@ private fun ShiftTemplateEditor(template: ShiftTemplate?, onSave: (ShiftTemplate
                             end = endsAt.toLocalTime(),
                             location = location.trim(),
                             notes = notes.trim(),
-                            kind = if (marksDayOff) ShiftTemplateKind.DayOff else ShiftTemplateKind.Work
+                            status = status.trim().ifBlank { if (marksDayOff) "Day off" else "Workday" },
+                            colorHex = colorHex.trim().ifBlank { "#C05621" },
+                            defaultTasks = defaultTasks.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList(),
+                            defaultReminders = defaultReminders.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList(),
+                            unpaidBreakMinutes = breakMinutes.toIntOrNull()?.coerceAtLeast(0) ?: 30,
+                            linkedShiftType = if (marksDayOff) LinkedShiftType.Any else linkedShiftType,
+                            kind = if (marksDayOff) ShiftTemplateKind.DayOff else ShiftTemplateKind.Work,
+                            enabled = enabled
                         )
                     )
                 },
@@ -4778,7 +5942,6 @@ private fun SettingsScreen(
     onLoadCalendars: () -> Unit,
     onSelectCalendar: (Long?) -> Unit,
     onSyncCalendar: () -> Unit,
-    onMockPremiumChanged: (Boolean) -> Unit,
     onNotificationPermissionNeeded: () -> Unit,
     onOpenPremium: () -> Unit
 ) {
@@ -4812,7 +5975,7 @@ private fun SettingsScreen(
             onSyncCalendar = onSyncCalendar,
             onOpenPremium = onOpenPremium
         )
-        PremiumSettingsSection(state = state, onMockPremiumChanged = onMockPremiumChanged, onOpenPremium = onOpenPremium)
+        PremiumSettingsSection(state = state, onOpenPremium = onOpenPremium)
     }
 }
 
@@ -4916,7 +6079,6 @@ private fun shiftAlarmOffsetLabel(minutes: Int): String {
 @Composable
 private fun PremiumSettingsSection(
     state: AppState,
-    onMockPremiumChanged: (Boolean) -> Unit,
     onOpenPremium: () -> Unit
 ) {
     Card(
@@ -4926,13 +6088,8 @@ private fun PremiumSettingsSection(
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SectionHeader("Premium", "Free stays useful. Premium adds convenience for power users.")
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.weight(1f)) {
-                    Text(if (state.premium.has(PremiumFeature.UnlimitedImports)) "Premium active" else "Free plan", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                    Text("Local mock entitlement for testing. Real billing can be wired later.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(checked = state.premium.mockPremiumEnabled, onCheckedChange = onMockPremiumChanged)
-            }
+            Text(if (state.premium.has(PremiumFeature.UnlimitedImports)) "Premium active" else "Free plan", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+            Text("Premium options are shown for planning. Purchases are not available in this build.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedButton(onClick = onOpenPremium, modifier = Modifier.fillMaxWidth()) {
                 Text("View premium options")
             }
@@ -4943,7 +6100,6 @@ private fun PremiumSettingsSection(
 @Composable
 private fun PremiumScreen(
     state: AppState,
-    onMockPremiumChanged: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
     LazyColumn(
@@ -4966,7 +6122,7 @@ private fun PremiumScreen(
         item {
             Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Suggested pricing", "No payments are implemented yet.")
+                    SectionHeader("Premium preview", "Purchases are not available in this build.")
                     PricingRow("Monthly", "$3.99", "For trying the power tools.")
                     PricingRow("Yearly", "$29.99", "Best fit for steady shift workers.")
                     PricingRow("Lifetime", "$59.99", "One-time unlock option.")
@@ -4984,18 +6140,7 @@ private fun PremiumScreen(
             }
         }
         item {
-            Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Mock premium", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                            Text("Local testing switch. Replace this with Play Billing entitlement later.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Switch(checked = state.premium.mockPremiumEnabled, onCheckedChange = onMockPremiumChanged)
-                    }
-                    Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back to settings") }
-                }
-            }
+            OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back to settings") }
         }
     }
 }
@@ -5222,7 +6367,7 @@ private fun ImportScreen(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
-        ImportStepHeader("1", "Pick a schedule screenshot", "Take a photo or choose an image. Your schedule image stays on your phone.")
+        ImportStepHeader("1", "Pick a schedule screenshot", "Take a photo or choose an image. Schedule images stay on your phone.")
         if (!PremiumAccess.canUse(state, PremiumFeature.UnlimitedImports)) {
             Text(
                 "$remainingImports free screenshot ${if (remainingImports == 1) "import" else "imports"} left this month.",
@@ -5300,6 +6445,16 @@ private fun ImportScreen(
                                 confidence = ScheduleImportConfidence.NeedsReview,
                                 selected = true
                             )
+                        },
+                        onAddDayOff = {
+                            val date = reviewRows.firstOrNull { row -> row.kind != ScheduleReviewKind.Ignored }?.date ?: LocalDate.now()
+                            reviewRows = reviewRows + ScheduleReviewRow(
+                                kind = ScheduleReviewKind.DayOff,
+                                date = date,
+                                title = "Day off",
+                                confidence = ScheduleImportConfidence.NeedsReview,
+                                selected = true
+                            )
                         }
                     )
                     if (reviewRows.isEmpty()) {
@@ -5359,7 +6514,13 @@ private fun ScheduleImportGuidanceCard(guidance: ScheduleImportGuidance) {
     }
 }
 
-private enum class ScheduleReviewKind { Shift, DayOff, Ignored }
+private enum class ScheduleReviewKind(val label: String) {
+    Shift("Shift"),
+    DayOff("Day off"),
+    Vacation("Vacation"),
+    Sick("Sick day"),
+    Ignored("Ignored")
+}
 
 private enum class ScheduleImportConfidence(val label: String) {
     High("High confidence"),
@@ -5374,6 +6535,8 @@ private data class ScheduleReviewRow(
     val start: LocalTime = LocalTime.of(9, 0),
     val end: LocalTime = LocalTime.of(17, 0),
     val title: String = "Work",
+    val shiftType: String = "Custom",
+    val role: String = "",
     val location: String = "",
     val notes: String = "",
     val sourceText: String = "",
@@ -5389,14 +6552,22 @@ private fun ParsedSchedule.toReviewRows(): List<ScheduleReviewRow> {
             start = shift.start,
             end = shift.end,
             title = shift.label,
+            shiftType = shift.label.toScheduleShiftType(),
+            role = shift.notes,
             location = shift.location,
             notes = shift.notes,
-            confidence = if (shift.label.isBlank() || shift.label == "Work") ScheduleImportConfidence.NeedsReview else ScheduleImportConfidence.High,
-            selected = shift.label.isNotBlank() && shift.label != "Work"
+            sourceText = shift.displayLine(),
+            confidence = shift.importConfidence(),
+            selected = shift.importConfidence() == ScheduleImportConfidence.High
         )
     }
     val dayOffRows = daysOff.map { date ->
-        ScheduleReviewRow(kind = ScheduleReviewKind.DayOff, date = date, title = "Day off", confidence = ScheduleImportConfidence.High)
+        val kind = when (dayOffTypes[date]) {
+            ShiftTemplateKind.Vacation -> ScheduleReviewKind.Vacation
+            ShiftTemplateKind.Sick -> ScheduleReviewKind.Sick
+            else -> ScheduleReviewKind.DayOff
+        }
+        ScheduleReviewRow(kind = kind, date = date, title = kind.label, confidence = ScheduleImportConfidence.High)
     }
     val unclearRows = unparsedLines.map { line ->
         ScheduleReviewRow(
@@ -5421,14 +6592,45 @@ private fun List<ScheduleReviewRow>.toParsedSchedule(): ParsedSchedule {
                     date = it.date,
                     start = it.start,
                     end = it.end,
-                    label = it.title.ifBlank { "Work" },
+                    label = it.shiftType.takeIf { type -> type != "Custom" } ?: it.title.ifBlank { "Work" },
                     location = it.location,
-                    notes = it.notes
+                    notes = listOf(it.role, it.notes).filter { value -> value.isNotBlank() }.distinct().joinToString("\n")
                 )
             },
-        daysOff = activeRows.filter { it.kind == ScheduleReviewKind.DayOff }.map { it.date }.toSet(),
+        daysOff = activeRows.filter { it.kind in dayOffReviewKinds }.map { it.date }.toSet(),
+        dayOffTypes = activeRows.filter { it.kind in dayOffReviewKinds }.associate { row ->
+            row.date to when (row.kind) {
+                ScheduleReviewKind.Vacation -> ShiftTemplateKind.Vacation
+                ScheduleReviewKind.Sick -> ShiftTemplateKind.Sick
+                else -> ShiftTemplateKind.DayOff
+            }
+        },
         unparsedLines = filter { it.kind == ScheduleReviewKind.Ignored && it.sourceText.isNotBlank() }.map { it.sourceText }
     )
+}
+
+private val dayOffReviewKinds = setOf(ScheduleReviewKind.DayOff, ScheduleReviewKind.Vacation, ScheduleReviewKind.Sick)
+
+private val scheduleShiftTypes = listOf("Open", "Close", "Mid", "Truck", "Inventory", "Custom")
+
+private fun String.toScheduleShiftType(): String {
+    val lower = lowercase()
+    return when {
+        "open" in lower -> "Open"
+        "close" in lower -> "Close"
+        "mid" in lower -> "Mid"
+        "truck" in lower -> "Truck"
+        "inventory" in lower -> "Inventory"
+        else -> "Custom"
+    }
+}
+
+private fun WorkShift.importConfidence(): ScheduleImportConfidence {
+    return when {
+        label.isBlank() || label == "Work" -> ScheduleImportConfidence.NeedsReview
+        location.isBlank() && notes.isBlank() -> ScheduleImportConfidence.NeedsReview
+        else -> ScheduleImportConfidence.High
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -5436,7 +6638,8 @@ private fun List<ScheduleReviewRow>.toParsedSchedule(): ParsedSchedule {
 private fun ScheduleReviewRows(
     rows: List<ScheduleReviewRow>,
     onRowsChanged: (List<ScheduleReviewRow>) -> Unit,
-    onAddShift: () -> Unit
+    onAddShift: () -> Unit,
+    onAddDayOff: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -5445,6 +6648,9 @@ private fun ScheduleReviewRows(
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
                 Text("Add shift")
+            }
+            OutlinedButton(onClick = onAddDayOff) {
+                Text("Add day off")
             }
         }
         rows.groupBy { if (it.kind == ScheduleReviewKind.Ignored) null else it.date }.toSortedMap(compareBy<LocalDate?> { it ?: LocalDate.MAX }).forEach { (date, dateRows) ->
@@ -5472,6 +6678,8 @@ private fun ScheduleReviewRowCard(row: ScheduleReviewRow, onChange: (ScheduleRev
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ConfidenceChip(row.confidence)
                 if (row.kind == ScheduleReviewKind.DayOff) AssistChip(onClick = {}, label = { Text("Day off") })
+                if (row.kind == ScheduleReviewKind.Vacation) AssistChip(onClick = {}, label = { Text("Vacation") })
+                if (row.kind == ScheduleReviewKind.Sick) AssistChip(onClick = {}, label = { Text("Sick day") })
                 if (row.kind == ScheduleReviewKind.Ignored) AssistChip(onClick = {}, label = { Text("Ignored") })
             }
             if (row.kind != ScheduleReviewKind.Ignored) {
@@ -5496,6 +6704,25 @@ private fun ScheduleReviewRowCard(row: ScheduleReviewRow, onChange: (ScheduleRev
                 )
             }
             if (row.kind == ScheduleReviewKind.Shift) {
+                Text("Shift type", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    scheduleShiftTypes.forEach { type ->
+                        FilterChip(
+                            selected = row.shiftType == type,
+                            onClick = {
+                                onChange(
+                                    row.copy(
+                                        shiftType = type,
+                                        title = if (type == "Custom") row.title else type,
+                                        selected = true,
+                                        confidence = ScheduleImportConfidence.NeedsReview
+                                    )
+                                )
+                            },
+                            label = { Text(type) }
+                        )
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedTextField(
                         value = row.start.toString(),
@@ -5515,14 +6742,21 @@ private fun ScheduleReviewRowCard(row: ScheduleReviewRow, onChange: (ScheduleRev
                 OutlinedTextField(
                     value = row.title,
                     onValueChange = { onChange(row.copy(title = it, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) },
-                    label = { Text("Title") },
+                    label = { Text("Custom title") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = row.role,
+                    onValueChange = { onChange(row.copy(role = it, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) },
+                    label = { Text("Role / department") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = row.location,
                     onValueChange = { onChange(row.copy(location = it, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) },
-                    label = { Text("Location") },
+                    label = { Text("Store / location") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -5543,6 +6777,18 @@ private fun ScheduleReviewRowCard(row: ScheduleReviewRow, onChange: (ScheduleRev
                 if (row.kind != ScheduleReviewKind.DayOff) {
                     OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.DayOff, title = "Day off", selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }, modifier = Modifier.weight(1f)) {
                         Text("Day off")
+                    }
+                }
+                if (row.kind != ScheduleReviewKind.Vacation) {
+                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.Vacation, title = "Vacation", selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }, modifier = Modifier.weight(1f)) {
+                        Text("Vacation")
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                if (row.kind != ScheduleReviewKind.Sick) {
+                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.Sick, title = "Sick day", selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }, modifier = Modifier.weight(1f)) {
+                        Text("Sick")
                     }
                 }
                 TextButton(onClick = onDelete, modifier = Modifier.weight(1f)) {
@@ -5703,6 +6949,7 @@ private sealed class Screen(val route: String, val label: String, val icon: Imag
     data object Notes : Screen("notes", "Notes", Icons.AutoMirrored.Filled.Notes)
     data object Schedule : Screen("schedule", "Schedule", Icons.Default.CalendarMonth)
     data object Manager : Screen("manager", "Manager", Icons.Default.Event)
+    data object WeeklyReview : Screen("weeklyReview", "Weekly", Icons.Default.Event)
     data object Import : Screen("import", "Import", Icons.Default.FileUpload)
     data object Settings : Screen("settings", "Settings", Icons.Default.Settings)
     data object TaskDetail : Screen("task", "Task", Icons.Default.CheckCircle)
@@ -5719,6 +6966,7 @@ private fun RepeatRule.displayName(): String = when (this) {
     RepeatRule.OpeningShifts -> "Opening shifts"
     RepeatRule.ClosingShifts -> "Closing shifts"
     RepeatRule.TruckDays -> "Truck days"
+    RepeatRule.InventoryDays -> "Inventory days"
 }
 
 private fun TaskItem.repeatLabel(): String {

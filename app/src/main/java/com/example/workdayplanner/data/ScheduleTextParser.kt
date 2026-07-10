@@ -13,7 +13,8 @@ import kotlin.math.abs
 data class ParsedSchedule(
     val shifts: List<WorkShift>,
     val daysOff: Set<LocalDate>,
-    val unparsedLines: List<String>
+    val unparsedLines: List<String>,
+    val dayOffTypes: Map<LocalDate, ShiftTemplateKind> = emptyMap()
 )
 
 object ScheduleTextParser {
@@ -28,7 +29,9 @@ object ScheduleTextParser {
     private val timeRangeRegex = Regex(
         """(?i)\b(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m?\.?)?\s*(?:-|\u2013|to)\s*(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m?\.?)?\b"""
     )
-    private val offRegex = Regex("""(?i)\b(off|pto|vacation|unavailable|day\s*off|not\s*scheduled)\b""")
+    private val offRegex = Regex("""(?i)\b(off|pto|vacation|sick|illness|unavailable|day\s*off|not\s*scheduled)\b""")
+    private val vacationRegex = Regex("""(?i)\b(vacation|pto)\b""")
+    private val sickRegex = Regex("""(?i)\b(sick|illness)\b""")
     private val shiftLabelRegex = Regex("""(?i)\b(open(?:ing)?|close|closing|mid|truck|inventory)\b""")
 
     fun parse(rawText: String, currentYear: Int = Year.now().value): ParsedSchedule {
@@ -66,6 +69,7 @@ object ScheduleTextParser {
     private fun parseWithDayCards(lines: List<String>, baseDate: LocalDate?, currentYear: Int): ParsedSchedule {
         val shifts = mutableListOf<WorkShift>()
         val daysOff = mutableSetOf<LocalDate>()
+        val dayOffTypes = mutableMapOf<LocalDate, ShiftTemplateKind>()
         val unparsed = mutableListOf<String>()
         var pendingDayName: String? = null
         var pendingDayRest: String? = null
@@ -79,9 +83,10 @@ object ScheduleTextParser {
                 currentDate = directDate
                 if (offRegex.containsMatchIn(line)) {
                     daysOff += directDate
+                    dayOffTypes[directDate] = dayOffKind(line)
                     return@forEach
                 }
-                parseShift(line, directDate)?.let {
+                parseShift(line, directDate, roleAndStoreNear(lines, originalLine))?.let {
                     shifts += it
                     return@forEach
                 }
@@ -109,6 +114,7 @@ object ScheduleTextParser {
                 if (rest.isNotBlank()) {
                     if (offRegex.containsMatchIn(rest)) {
                         daysOff += matchedDate
+                        dayOffTypes[matchedDate] = dayOffKind(rest)
                         pendingDayRest = null
                         return@forEach
                     }
@@ -147,6 +153,7 @@ object ScheduleTextParser {
             val activeDate = currentDate
             if (activeDate != null && offRegex.containsMatchIn(line)) {
                 daysOff += activeDate
+                dayOffTypes[activeDate] = dayOffKind(line)
                 return@forEach
             }
 
@@ -163,13 +170,15 @@ object ScheduleTextParser {
         return ParsedSchedule(
             shifts = shifts.distinctBy { "${it.date}-${it.start}-${it.end}" },
             daysOff = daysOff,
-            unparsedLines = unparsed
+            unparsedLines = unparsed,
+            dayOffTypes = dayOffTypes
         )
     }
 
     private fun parseSequentialSchedule(lines: List<String>, baseDate: LocalDate): ParsedSchedule {
         val shifts = mutableListOf<WorkShift>()
         val daysOff = mutableSetOf<LocalDate>()
+        val dayOffTypes = mutableMapOf<LocalDate, ShiftTemplateKind>()
         val unparsed = mutableListOf<String>()
         val knownDates = extractDayCardDates(lines, baseDate)
         var eventIndex = 0
@@ -191,6 +200,7 @@ object ScheduleTextParser {
             val date = knownDates.getOrNull(eventIndex) ?: baseDate.plusDays(eventIndex.toLong())
             if (eventKey == "off") {
                 daysOff += date
+                dayOffTypes[date] = dayOffKind(line)
             } else {
                 parseShift(line, date, roleAndStoreNear(lines, line))?.let { shifts += it }
             }
@@ -201,7 +211,8 @@ object ScheduleTextParser {
         return ParsedSchedule(
             shifts = shifts.distinctBy { "${it.date}-${it.start}-${it.end}" },
             daysOff = daysOff,
-            unparsedLines = unparsed
+            unparsedLines = unparsed,
+            dayOffTypes = dayOffTypes
         )
     }
 
@@ -360,7 +371,7 @@ object ScheduleTextParser {
         return startsWith("am", ignoreCase = true) || startsWith("pm", ignoreCase = true)
     }
 
-    private fun parseShift(line: String, date: LocalDate, label: String? = null): WorkShift? {
+    private fun parseShift(line: String, date: LocalDate, detail: String? = null): WorkShift? {
         val timeMatch = timeRangeRegex.find(line) ?: return null
         val (startPeriod, endPeriod) = inferPeriods(
             startHourText = timeMatch.groupValues[1],
@@ -381,10 +392,39 @@ object ScheduleTextParser {
         return if (start == null || end == null) {
             null
         } else {
-            val detectedLabel = shiftLabelRegex.find(line)?.value?.replaceFirstChar { char ->
-                if (char.isLowerCase()) char.titlecase(Locale.US) else char.toString()
-            }
-            WorkShift(date = date, start = start, end = end, label = detectedLabel ?: label?.takeIf { it.isNotBlank() } ?: "Work")
+            val detectedLabel = shiftTypeLabel(line)
+            val role = detail?.substringBefore(" - Store #")?.takeIf { it.isNotBlank() && !it.startsWith("Store #", ignoreCase = true) }
+            val store = detail?.substringAfter(" - ", missingDelimiterValue = "")
+                ?.takeIf { it.startsWith("Store #", ignoreCase = true) }
+                ?: detail?.takeIf { it.startsWith("Store #", ignoreCase = true) }
+            WorkShift(
+                date = date,
+                start = start,
+                end = end,
+                label = detectedLabel ?: role ?: "Work",
+                location = store.orEmpty(),
+                notes = role?.takeIf { detectedLabel != null }.orEmpty()
+            )
+        }
+    }
+
+    private fun shiftTypeLabel(line: String): String? {
+        val match = shiftLabelRegex.find(line)?.value?.lowercase(Locale.US) ?: return null
+        return when {
+            match.startsWith("open") -> "Open"
+            match.startsWith("close") -> "Close"
+            match == "mid" -> "Mid"
+            match == "truck" -> "Truck"
+            match == "inventory" -> "Inventory"
+            else -> match.replaceFirstChar { it.titlecase(Locale.US) }
+        }
+    }
+
+    private fun dayOffKind(line: String): ShiftTemplateKind {
+        return when {
+            sickRegex.containsMatchIn(line) -> ShiftTemplateKind.Sick
+            vacationRegex.containsMatchIn(line) -> ShiftTemplateKind.Vacation
+            else -> ShiftTemplateKind.DayOff
         }
     }
 

@@ -299,7 +299,8 @@ class ScheduleTextParserTest {
         assertEquals(LocalDate.of(2026, 7, 13), parsed.shifts[0].date)
         assertEquals(LocalTime.of(6, 0), parsed.shifts[0].start)
         assertEquals(LocalTime.of(14, 30), parsed.shifts[0].end)
-        assertEquals("Deli Clerk - Store #1640", parsed.shifts[0].label)
+        assertEquals("Deli Clerk", parsed.shifts[0].label)
+        assertEquals("Store #1640", parsed.shifts[0].location)
         assertEquals(LocalDate.of(2026, 7, 14), parsed.shifts[1].date)
         assertEquals(LocalTime.of(14, 0), parsed.shifts[1].end)
         assertEquals(LocalDate.of(2026, 7, 15), parsed.shifts[2].date)
@@ -358,5 +359,40 @@ class ScheduleTextParserTest {
         assertEquals("Close", parsed.shifts.first().label)
         assertEquals(LocalTime.of(13, 0), parsed.shifts.first().start)
         assertEquals(LocalTime.of(21, 0), parsed.shifts.first().end)
+    }
+
+    @Test
+    fun preservesVacationAndSickDayTypes() {
+        val parsed = ScheduleTextParser.parse(
+            """
+            Mon Vacation
+            Tue Sick
+            """.trimIndent(),
+            currentYear = 2026
+        )
+
+        val vacationDate = parsed.daysOff.first { it.dayOfWeek == DayOfWeek.MONDAY }
+        val sickDate = parsed.daysOff.first { it.dayOfWeek == DayOfWeek.TUESDAY }
+
+        assertEquals(ShiftTemplateKind.Vacation, parsed.dayOffTypes[vacationDate])
+        assertEquals(ShiftTemplateKind.Sick, parsed.dayOffTypes[sickDate])
+    }
+
+    @Test
+    fun separatesShiftTypeRoleAndStore() {
+        val parsed = ScheduleTextParser.parse(
+            """
+            7/12 Inventory 6a-2p
+            12 Assistant Deli Manager
+            Store #1640
+            """.trimIndent(),
+            currentYear = 2026
+        )
+
+        val shift = parsed.shifts.first()
+
+        assertEquals("Inventory", shift.label)
+        assertEquals("Assistant Deli Manager", shift.notes)
+        assertEquals("Store #1640", shift.location)
     }
 }

@@ -15,28 +15,57 @@ enum class RepeatRule {
     EveryWorkday,
     OpeningShifts,
     ClosingShifts,
-    TruckDays
+    TruckDays,
+    InventoryDays
 }
 
 enum class TaskTimingRule(val label: String) {
     AtTime("At a time"),
     BeforeNextShift("Before next shift"),
-    DuringShift("During shift"),
-    AfterShift("After shift"),
-    WorkdaysOnly("On workdays only")
+    AfterShiftStarts("After shift starts"),
+    BeforeShiftEnds("Before shift ends"),
+    AfterShiftEnds("After shift ends"),
+    MorningOfWorkday("Morning of workday"),
+    NightBeforeShift("Night before shift"),
+    DaysOffOnly("On days off only"),
+    WorkdaysOnly("Workdays only");
+
+    companion object {
+        fun fromStored(value: String): TaskTimingRule {
+            return when (value) {
+                "DuringShift" -> AfterShiftStarts
+                "AfterShift" -> AfterShiftEnds
+                else -> runCatching { valueOf(value) }.getOrDefault(AtTime)
+            }
+        }
+    }
 }
 
 enum class LinkedShiftType(val label: String) {
     Any("Any shift"),
     Opening("Opening shift"),
+    Mid("Mid shift"),
     Closing("Closing shift"),
     Truck("Truck day"),
-    Inventory("Inventory day")
+    Inventory("Inventory day"),
+    Training("Training day"),
+    Manager("Manager shift")
 }
 
 enum class CarryOverBehavior(val label: String) {
-    None("Do not roll over"),
-    NextWorkday("Roll to next workday")
+    KeepOverdue("Keep overdue"),
+    NextWorkday("Move to next workday"),
+    DismissIfMissed("Dismiss if missed"),
+    AskMe("Ask me");
+
+    companion object {
+        fun fromStored(value: String): CarryOverBehavior {
+            return when (value) {
+                "None" -> KeepOverdue
+                else -> runCatching { valueOf(value) }.getOrDefault(KeepOverdue)
+            }
+        }
+    }
 }
 
 enum class AppThemeStyle(val label: String, val premium: Boolean) {
@@ -100,6 +129,14 @@ enum class WidgetLayoutMode(val label: String) {
 
 enum class WorkNoteKind(val label: String) {
     General("General"),
+    ShiftNote("Shift note"),
+    ManagerHandoff("Manager handoff"),
+    OrderNote("Order note"),
+    TruckNote("Truck note"),
+    InventoryNote("Inventory note"),
+    EmployeeTrainingNote("Employee/training note"),
+    ReminderNote("Reminder note"),
+    PayTimecardNote("Pay/timecard note"),
     Order("Order"),
     Cleaning("Cleaning"),
     Customer("Customer"),
@@ -107,6 +144,16 @@ enum class WorkNoteKind(val label: String) {
     Issue("Issue"),
     FollowUp("Follow-up"),
     Meeting("Meeting")
+}
+
+enum class WorkVoiceCaptureType(val label: String, val noteKind: WorkNoteKind) {
+    OrderList("Order list", WorkNoteKind.OrderNote),
+    ShiftNote("Shift note", WorkNoteKind.ShiftNote),
+    ManagerHandoff("Manager handoff", WorkNoteKind.ManagerHandoff),
+    TaskList("Task list", WorkNoteKind.ShiftNote),
+    TruckNote("Truck note", WorkNoteKind.TruckNote),
+    InventoryNote("Inventory note", WorkNoteKind.InventoryNote),
+    Reminder("Reminder", WorkNoteKind.ReminderNote)
 }
 
 data class TaskItem(
@@ -124,17 +171,23 @@ data class TaskItem(
     val linkedShiftId: String? = null,
     val linkedShiftType: LinkedShiftType = LinkedShiftType.Any,
     val timingRule: TaskTimingRule = TaskTimingRule.AtTime,
-    val carryOverBehavior: CarryOverBehavior = CarryOverBehavior.None,
+    val carryOverBehavior: CarryOverBehavior = CarryOverBehavior.KeepOverdue,
     val alarmOffsetMinutes: Long = 30,
-    val completed: Boolean = false
+    val completed: Boolean = false,
+    val completionHistory: List<LocalDateTime> = emptyList()
 )
 
 data class WorkNote(
     val id: String = UUID.randomUUID().toString(),
     val date: LocalDate = LocalDate.now(),
     val text: String,
+    val rawTranscript: String = "",
+    val title: String = "",
     val kind: WorkNoteKind = WorkNoteKind.General,
+    val linkedShiftId: String? = null,
     val tags: List<String> = emptyList(),
+    val pinned: Boolean = false,
+    val archived: Boolean = false,
     val createdAt: LocalDateTime = LocalDateTime.now()
 )
 
@@ -184,7 +237,14 @@ data class ShiftTemplate(
     val end: LocalTime = LocalTime.of(17, 0),
     val location: String = "",
     val notes: String = "",
+    val status: String = "Work",
+    val colorHex: String = "#C05621",
+    val defaultTasks: List<String> = emptyList(),
+    val defaultReminders: List<String> = emptyList(),
+    val unpaidBreakMinutes: Int = 30,
+    val linkedShiftType: LinkedShiftType = LinkedShiftType.Any,
     val kind: ShiftTemplateKind = ShiftTemplateKind.Work,
+    val enabled: Boolean = true,
     val builtIn: Boolean = false
 )
 
@@ -231,7 +291,7 @@ data class TaskTemplate(
     val workRelated: Boolean = true,
     val linkedShiftType: LinkedShiftType = LinkedShiftType.Any,
     val timingRule: TaskTimingRule = TaskTimingRule.AtTime,
-    val carryOverBehavior: CarryOverBehavior = CarryOverBehavior.None,
+    val carryOverBehavior: CarryOverBehavior = CarryOverBehavior.KeepOverdue,
     val alarmOffsetMinutes: Long = 30,
     val builtIn: Boolean = false
 )
@@ -306,7 +366,9 @@ data class TimecardEntry(
     val lunchStart: LocalDateTime? = null,
     val lunchEnd: LocalDateTime? = null,
     val clockOut: LocalDateTime? = null,
-    val note: String = ""
+    val note: String = "",
+    val missedPunchNote: String = "",
+    val payIssueNote: String = ""
 )
 
 data class AppState(

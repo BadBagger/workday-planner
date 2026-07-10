@@ -9,7 +9,8 @@ data class TimecardSummary(
     val workedHours: Double,
     val lunchHours: Double,
     val paidHours: Double,
-    val grossPay: Double
+    val grossPay: Double,
+    val overtimeHours: Double = 0.0
 )
 
 object TimecardCalculator {
@@ -43,7 +44,7 @@ object TimecardCalculator {
         val overtimeHours = (paid - state.paySettings.overtimeThresholdHours).coerceAtLeast(0.0)
         val gross = regularHours * state.paySettings.hourlyRate +
             overtimeHours * state.paySettings.hourlyRate * state.paySettings.overtimeMultiplier
-        return TimecardSummary(workedHours = worked, lunchHours = lunch, paidHours = paid, grossPay = gross)
+        return TimecardSummary(workedHours = worked, lunchHours = lunch, paidHours = paid, grossPay = gross, overtimeHours = overtimeHours)
     }
 
     private fun minutesBetween(start: LocalDateTime, end: LocalDateTime): Long {

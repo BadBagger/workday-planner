@@ -5,6 +5,7 @@ import org.junit.Test
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 
 class TaskRecurrenceTest {
     @Test
@@ -56,5 +57,27 @@ class TaskRecurrenceTest {
         val next = TaskRecurrence.nextOccurrence(task, state)!!
 
         assertEquals("2026-07-13T08:00", next.deadline.toString())
+    }
+
+    @Test
+    fun inventoryRepeatUsesNextInventoryShift() {
+        val task = TaskItem(
+            title = "Inventory checklist",
+            deadline = LocalDateTime.of(2026, 7, 6, 8, 0),
+            repeatRule = RepeatRule.InventoryDays,
+            timingRule = TaskTimingRule.BeforeNextShift,
+            alarmOffsetMinutes = 60
+        )
+        val state = AppState(
+            shifts = listOf(
+                WorkShift(date = LocalDate.of(2026, 7, 7), start = LocalTime.of(9, 0), end = LocalTime.of(17, 0), label = "Mid"),
+                WorkShift(date = LocalDate.of(2026, 7, 8), start = LocalTime.of(6, 0), end = LocalTime.of(14, 0), label = "Inventory day")
+            ),
+            defaultDaysOff = emptySet()
+        )
+
+        val next = TaskRecurrence.nextOccurrence(task, state)!!
+
+        assertEquals(LocalDateTime.of(2026, 7, 8, 5, 0), next.deadline)
     }
 }

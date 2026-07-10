@@ -26,8 +26,19 @@ class PlannerRepository(context: Context) {
         state.copy(tasks = state.tasks.filterNot { it.id == taskId })
     }
 
+    fun clearCompletedTasks() = update { state ->
+        state.copy(tasks = state.tasks.filterNot { it.completed })
+    }
+
     fun addNote(note: WorkNote) = update { state ->
         state.copy(notes = (state.notes + note).sortedWith(compareByDescending<WorkNote> { it.date }.thenByDescending { it.createdAt }))
+    }
+
+    fun upsertNote(note: WorkNote) = update { state ->
+        state.copy(
+            notes = (state.notes.filterNot { it.id == note.id } + note)
+                .sortedWith(compareByDescending<WorkNote> { it.pinned }.thenByDescending { it.date }.thenByDescending { it.createdAt })
+        )
     }
 
     fun deleteNote(noteId: String) = update { state ->
@@ -55,7 +66,15 @@ class PlannerRepository(context: Context) {
 
     fun toggleComplete(taskId: String) = update { state ->
         state.copy(tasks = state.tasks.map { task ->
-            if (task.id == taskId) task.copy(completed = !task.completed) else task
+            if (task.id == taskId) {
+                val nextCompleted = !task.completed
+                task.copy(
+                    completed = nextCompleted,
+                    completionHistory = if (nextCompleted) task.completionHistory + LocalDateTime.now() else task.completionHistory
+                )
+            } else {
+                task
+            }
         })
     }
 
@@ -316,6 +335,7 @@ class PlannerRepository(context: Context) {
         .put("carryOverBehavior", task.carryOverBehavior.name)
         .put("alarmOffsetMinutes", task.alarmOffsetMinutes)
         .put("completed", task.completed)
+        .put("completionHistory", JSONArray(task.completionHistory.map(LocalDateTime::toString)))
 
     private fun taskFromJson(json: JSONObject) = TaskItem(
         id = json.getString("id"),
@@ -337,28 +357,43 @@ class PlannerRepository(context: Context) {
         workRelated = json.optBoolean("workRelated", true),
         linkedShiftId = json.optString("linkedShiftId").takeIf { it.isNotBlank() && it != "null" },
         linkedShiftType = runCatching { LinkedShiftType.valueOf(json.optString("linkedShiftType", LinkedShiftType.Any.name)) }.getOrDefault(LinkedShiftType.Any),
-        timingRule = runCatching { TaskTimingRule.valueOf(json.optString("timingRule", TaskTimingRule.AtTime.name)) }.getOrDefault(TaskTimingRule.AtTime),
-        carryOverBehavior = runCatching { CarryOverBehavior.valueOf(json.optString("carryOverBehavior", CarryOverBehavior.None.name)) }.getOrDefault(CarryOverBehavior.None),
+        timingRule = TaskTimingRule.fromStored(json.optString("timingRule", TaskTimingRule.AtTime.name)),
+        carryOverBehavior = CarryOverBehavior.fromStored(json.optString("carryOverBehavior", CarryOverBehavior.KeepOverdue.name)),
         alarmOffsetMinutes = json.optLong("alarmOffsetMinutes", 30).coerceAtLeast(0),
-        completed = json.optBoolean("completed")
+        completed = json.optBoolean("completed"),
+        completionHistory = json.optJSONArray("completionHistory").toStrings().mapNotNull { value ->
+            runCatching { LocalDateTime.parse(value) }.getOrNull()
+        }
     )
 
     private fun noteToJson(note: WorkNote) = JSONObject()
         .put("id", note.id)
         .put("date", note.date.toString())
         .put("text", note.text)
+        .put("rawTranscript", note.rawTranscript)
+        .put("title", note.title)
         .put("kind", note.kind.name)
+        .put("linkedShiftId", note.linkedShiftId)
         .put("tags", JSONArray(note.tags))
+        .put("pinned", note.pinned)
+        .put("archived", note.archived)
         .put("createdAt", note.createdAt.toString())
 
     private fun noteFromJson(json: JSONObject) = WorkNote(
         id = json.getString("id"),
         date = LocalDate.parse(json.getString("date")),
         text = json.getString("text"),
+        rawTranscript = json.optString("rawTranscript"),
+        title = json.optString("title").ifBlank {
+            json.optString("text").lineSequence().firstOrNull().orEmpty().take(48)
+        },
         kind = runCatching {
             WorkNoteKind.valueOf(json.optString("kind", WorkNoteKind.General.name))
         }.getOrDefault(WorkNoteKind.General),
+        linkedShiftId = json.optString("linkedShiftId").takeIf { it.isNotBlank() && it != "null" },
         tags = json.optJSONArray("tags").toStrings(),
+        pinned = json.optBoolean("pinned", false),
+        archived = json.optBoolean("archived", false),
         createdAt = json.optString("createdAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse)
             ?: LocalDateTime.now()
     )
@@ -459,6 +494,8 @@ class PlannerRepository(context: Context) {
         .put("lunchEnd", entry.lunchEnd?.toString())
         .put("clockOut", entry.clockOut?.toString())
         .put("note", entry.note)
+        .put("missedPunchNote", entry.missedPunchNote)
+        .put("payIssueNote", entry.payIssueNote)
 
     private fun timecardFromJson(json: JSONObject) = TimecardEntry(
         id = json.getString("id"),
@@ -467,7 +504,9 @@ class PlannerRepository(context: Context) {
         lunchStart = json.optString("lunchStart").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
         lunchEnd = json.optString("lunchEnd").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
         clockOut = json.optString("clockOut").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse),
-        note = json.optString("note")
+        note = json.optString("note"),
+        missedPunchNote = json.optString("missedPunchNote"),
+        payIssueNote = json.optString("payIssueNote")
     )
 
     private fun eventToJson(event: WorkEvent) = JSONObject()
@@ -516,7 +555,14 @@ class PlannerRepository(context: Context) {
         .put("end", template.end.toString())
         .put("location", template.location)
         .put("notes", template.notes)
+        .put("status", template.status)
+        .put("colorHex", template.colorHex)
+        .put("defaultTasks", JSONArray(template.defaultTasks))
+        .put("defaultReminders", JSONArray(template.defaultReminders))
+        .put("unpaidBreakMinutes", template.unpaidBreakMinutes)
+        .put("linkedShiftType", template.linkedShiftType.name)
         .put("kind", template.kind.name)
+        .put("enabled", template.enabled)
 
     private fun shiftTemplateFromJson(json: JSONObject) = ShiftTemplate(
         id = json.getString("id"),
@@ -526,7 +572,14 @@ class PlannerRepository(context: Context) {
         end = json.optString("end").takeIf { it.isNotBlank() }?.let(LocalTime::parse) ?: LocalTime.of(17, 0),
         location = json.optString("location"),
         notes = json.optString("notes"),
-        kind = runCatching { ShiftTemplateKind.valueOf(json.optString("kind", ShiftTemplateKind.Work.name)) }.getOrDefault(ShiftTemplateKind.Work)
+        status = json.optString("status", "Work"),
+        colorHex = json.optString("colorHex", "#C05621"),
+        defaultTasks = json.optJSONArray("defaultTasks").toStrings(),
+        defaultReminders = json.optJSONArray("defaultReminders").toStrings(),
+        unpaidBreakMinutes = json.optInt("unpaidBreakMinutes", 30).coerceAtLeast(0),
+        linkedShiftType = runCatching { LinkedShiftType.valueOf(json.optString("linkedShiftType", LinkedShiftType.Any.name)) }.getOrDefault(LinkedShiftType.Any),
+        kind = runCatching { ShiftTemplateKind.valueOf(json.optString("kind", ShiftTemplateKind.Work.name)) }.getOrDefault(ShiftTemplateKind.Work),
+        enabled = json.optBoolean("enabled", true)
     )
 
     private fun taskTemplateToJson(template: TaskTemplate) = JSONObject()
@@ -555,8 +608,8 @@ class PlannerRepository(context: Context) {
         reminderEnabled = json.optBoolean("reminderEnabled", false),
         workRelated = json.optBoolean("workRelated", true),
         linkedShiftType = runCatching { LinkedShiftType.valueOf(json.optString("linkedShiftType", LinkedShiftType.Any.name)) }.getOrDefault(LinkedShiftType.Any),
-        timingRule = runCatching { TaskTimingRule.valueOf(json.optString("timingRule", TaskTimingRule.AtTime.name)) }.getOrDefault(TaskTimingRule.AtTime),
-        carryOverBehavior = runCatching { CarryOverBehavior.valueOf(json.optString("carryOverBehavior", CarryOverBehavior.None.name)) }.getOrDefault(CarryOverBehavior.None),
+        timingRule = TaskTimingRule.fromStored(json.optString("timingRule", TaskTimingRule.AtTime.name)),
+        carryOverBehavior = CarryOverBehavior.fromStored(json.optString("carryOverBehavior", CarryOverBehavior.KeepOverdue.name)),
         alarmOffsetMinutes = json.optLong("alarmOffsetMinutes", 30).coerceAtLeast(0)
     )
 
@@ -646,7 +699,8 @@ fun mergeImportedSchedule(state: AppState, parsed: ParsedSchedule): AppState {
             .distinctBy { "${it.date}-${it.start}-${it.end}" }
             .sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start }),
         daysOff = (state.daysOff - importedDates) + parsed.daysOff,
-        dayOffTypes = (state.dayOffTypes - importedDates) + parsed.daysOff.associateWith { ShiftTemplateKind.DayOff }
+        dayOffTypes = (state.dayOffTypes - importedDates) +
+            parsed.daysOff.associateWith { parsed.dayOffTypes[it] ?: ShiftTemplateKind.DayOff }
     )
 }
 

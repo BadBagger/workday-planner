@@ -13,7 +13,7 @@ class WorkNoteOrganizerTest {
             date = LocalDate.of(2026, 7, 6)
         )
 
-        assertEquals(WorkNoteKind.Order, note.kind)
+        assertEquals(WorkNoteKind.TruckNote, note.kind)
         assertTrue(note.tags.contains("Frozen"))
         assertTrue(note.tags.contains("Truck"))
     }
@@ -22,7 +22,7 @@ class WorkNoteOrganizerTest {
     fun detectsFollowUpBeforeGenericIssueWhenExplicit() {
         val note = WorkNoteOrganizer.create("Remember to follow up next shift about missing labels")
 
-        assertEquals(WorkNoteKind.FollowUp, note.kind)
+        assertEquals(WorkNoteKind.ReminderNote, note.kind)
         assertTrue(note.tags.contains("Follow-up"))
     }
 

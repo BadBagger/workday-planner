@@ -16,6 +16,8 @@ import com.example.workdayplanner.data.ParsedSchedule
 import com.example.workdayplanner.data.PaySettings
 import com.example.workdayplanner.data.PremiumAccess
 import com.example.workdayplanner.data.PlannerRepository
+import com.example.workdayplanner.data.CarryOverBehavior
+import com.example.workdayplanner.data.RepeatRule
 import com.example.workdayplanner.data.ScheduleTextParser
 import com.example.workdayplanner.data.ScheduleChangeDetector
 import com.example.workdayplanner.data.ScheduleChangeSet
@@ -34,6 +36,7 @@ import com.example.workdayplanner.data.WorkChecklistTemplates
 import com.example.workdayplanner.data.WorkNoteOrganizer
 import com.example.workdayplanner.data.WorkEvent
 import com.example.workdayplanner.data.WidgetLayoutMode
+import com.example.workdayplanner.data.WorkNote
 import com.example.workdayplanner.data.WorkImage
 import com.example.workdayplanner.data.WorkShift
 import com.example.workdayplanner.data.ShiftTemplate
@@ -41,6 +44,7 @@ import com.example.workdayplanner.data.ShiftTemplateKind
 import com.example.workdayplanner.data.ShiftPattern
 import com.example.workdayplanner.data.ShiftAlarmSettings
 import com.example.workdayplanner.data.ScheduleAwareTaskPlanner
+import com.example.workdayplanner.data.TaskTimingRule
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
@@ -96,25 +100,65 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         alarmScheduler.cancel(taskId)
     }
 
+    fun clearCompletedTasks() {
+        state.value.tasks.filter { it.completed }.forEach { alarmScheduler.cancel(it.id) }
+        repository.clearCompletedTasks()
+    }
+
     fun addWorkNote(text: String) {
         if (text.isBlank()) return
         repository.addNote(WorkNoteOrganizer.create(text))
+    }
+
+    fun saveWorkNote(note: WorkNote) {
+        if (note.text.isBlank() && note.title.isBlank()) return
+        repository.upsertNote(note)
     }
 
     fun deleteWorkNote(noteId: String) {
         repository.deleteNote(noteId)
     }
 
+    fun toggleWorkNotePinned(noteId: String) {
+        val note = state.value.notes.firstOrNull { it.id == noteId } ?: return
+        repository.upsertNote(note.copy(pinned = !note.pinned))
+    }
+
+    fun toggleWorkNoteArchived(noteId: String) {
+        val note = state.value.notes.firstOrNull { it.id == noteId } ?: return
+        repository.upsertNote(note.copy(archived = !note.archived))
+    }
+
     fun createTaskFromNote(noteId: String) {
         val note = state.value.notes.firstOrNull { it.id == noteId } ?: return
         val task = TaskItem(
-            title = note.text.lineSequence().firstOrNull()?.take(60)?.ifBlank { "Follow up note" } ?: "Follow up note",
+            title = note.title.ifBlank { note.text.lineSequence().firstOrNull()?.take(60) ?: "Follow up note" },
             notes = note.text,
             category = TaskCategory.Admin,
             deadline = LocalDateTime.now().plusDays(1).withHour(9).withMinute(0),
             alarmAt = LocalDateTime.now().plusDays(1).withHour(8).withMinute(30)
         )
         saveTask(task)
+    }
+
+    fun createChecklistFromNote(noteId: String) {
+        val note = state.value.notes.firstOrNull { it.id == noteId } ?: return
+        val checklistLines = note.text.lineSequence()
+            .map { it.trim().trimStart('-', '*') }
+            .filter { it.isNotBlank() }
+            .joinToString("\n") { "[ ] $it" }
+            .ifBlank { "[ ] Follow up ${note.title.ifBlank { "work note" }}" }
+        saveTask(
+            TaskItem(
+                title = "Checklist: ${note.title.ifBlank { note.kind.label }}",
+                notes = checklistLines,
+                category = TaskCategory.Admin,
+                priority = TaskPriority.Normal,
+                deadline = LocalDateTime.now().plusDays(1).withHour(9).withMinute(0),
+                alarmAt = LocalDateTime.now().plusDays(1).withHour(8).withMinute(30),
+                workRelated = true
+            )
+        )
     }
 
     fun addWorkImage(title: String, sourceUri: Uri) {
@@ -270,7 +314,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         repository.toggleComplete(taskId)
         if (!task.completed) {
             alarmScheduler.cancel(taskId)
-            TaskRecurrence.nextOccurrence(task, state.value)?.let(::saveTaskIfMissing)
+            TaskRecurrence.nextOccurrence(task.copy(completed = true, completionHistory = task.completionHistory + LocalDateTime.now()), state.value)?.let(::saveTaskIfMissing)
         } else {
             alarmScheduler.schedule(task.copy(completed = false))
         }
@@ -285,10 +329,12 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun addDayOff(date: LocalDate) {
         repository.addDayOff(date)
+        rescheduleScheduleAwareTasks()
     }
 
     fun addTypedDayOff(date: LocalDate, kind: ShiftTemplateKind) {
         repository.addDayOff(date, kind)
+        rescheduleScheduleAwareTasks()
     }
 
     fun saveShift(shift: WorkShift) {
@@ -312,7 +358,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun applyShiftPattern(pattern: ShiftPattern, allowDuplicates: Boolean) {
         repository.applyShiftPattern(pattern, allowDuplicates)
-        alarmScheduler.rescheduleOpenTasks(state.value.tasks)
+        rescheduleScheduleAwareTasks()
         rescheduleShiftAlarms()
     }
 
@@ -342,11 +388,12 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun removeDayOff(date: LocalDate) {
         repository.removeDayOff(date)
+        rescheduleScheduleAwareTasks()
     }
 
     fun clearSchedule() {
         repository.clearSchedule()
-        alarmScheduler.rescheduleOpenTasks(state.value.tasks)
+        rescheduleScheduleAwareTasks()
         rescheduleShiftAlarms()
     }
 
@@ -358,6 +405,18 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
             alarmScheduler.cancel(resolved.id)
             alarmScheduler.schedule(resolved)
         }
+    }
+
+    private fun rescheduleScheduleAwareTasks() {
+        val current = state.value
+        current.tasks
+            .filter { it.isScheduleAware() }
+            .forEach { task ->
+                val resolved = ScheduleAwareTaskPlanner.resolve(task, current)
+                repository.upsertTask(resolved)
+                alarmScheduler.cancel(resolved.id)
+                alarmScheduler.schedule(resolved)
+            }
     }
 
     fun setDarkMode(enabled: Boolean) {
@@ -418,8 +477,8 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         updateTodayTimecard { entry, now -> entry.copy(clockOut = entry.clockOut ?: now) }
     }
 
-    fun saveTimecardNote(note: String) {
-        updateTodayTimecard { entry, _ -> entry.copy(note = note.trim()) }
+    fun saveTimecardEntry(entry: TimecardEntry) {
+        repository.upsertTimecard(entry)
     }
 
     fun syncShiftsToCalendar() {
@@ -510,6 +569,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         val parsed = parsedOverride ?: previewImport()
         val changes = ScheduleChangeDetector.compare(state.value, parsed)
         repository.importSchedule(parsed)
+        rescheduleScheduleAwareTasks()
         rescheduleShiftAlarms()
         if (currentImportState().imageBased) repository.recordScreenshotImport()
         mutableImportState.value = currentImportState().copy(
@@ -535,7 +595,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         return if (denied) {
             ScheduleImportGuidance(ScheduleImportIssue.PermissionDenied)
         } else {
-            ScheduleImportGuidance(ScheduleImportIssue.ImageTooBlurry, message.takeIf { it.isNotBlank() })
+            ScheduleImportGuidance(ScheduleImportIssue.OcrFailed, message.takeIf { it.isNotBlank() })
         }
     }
 
@@ -639,6 +699,19 @@ private fun TrainingItem.toTrainingTask(): TaskItem {
         deadline = due.atTime(9, 0),
         alarmAt = due.atTime(8, 30)
     )
+}
+
+private fun TaskItem.isScheduleAware(): Boolean {
+    return timingRule != TaskTimingRule.AtTime ||
+        skipDaysOff ||
+        repeatRule in setOf(
+            RepeatRule.EveryWorkday,
+            RepeatRule.OpeningShifts,
+            RepeatRule.ClosingShifts,
+            RepeatRule.TruckDays,
+            RepeatRule.InventoryDays
+        ) ||
+        carryOverBehavior in setOf(CarryOverBehavior.NextWorkday, CarryOverBehavior.DismissIfMissed)
 }
 
 data class ImportUiState(
