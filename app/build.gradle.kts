@@ -20,8 +20,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 60
-        versionName = "2.40-weekly-review-play-polish"
+        versionCode = 61
+        versionName = "2.41-home-tasks-up"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

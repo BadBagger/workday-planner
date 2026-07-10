@@ -704,34 +704,6 @@ private fun TaskListScreen(
             )
         }
         item {
-            TimecardSection(
-                state = state,
-                onClockIn = onClockIn,
-                onStartLunch = onStartLunch,
-                onEndLunch = onEndLunch,
-                onClockOut = onClockOut,
-                onSaveEntry = onSaveTimecardEntry
-            )
-        }
-        item { ChecklistTemplateSection(state = state, onAddChecklist = onAddChecklist, onOpenPremium = onOpenPremium) }
-        item {
-            OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Event, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Add meeting or work event")
-            }
-        }
-        if (events.isNotEmpty()) {
-            item { Text("Work events", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
-            items(events, key = { it.id }) { event ->
-                EventCard(
-                    event = event,
-                    onClick = { onEventClick(event) },
-                    onDelete = { onDeleteEvent(event.id) }
-                )
-            }
-        }
-        item {
             TaskFocusCard(
                 overdueCount = allOverdueCount,
                 criticalCount = allCriticalCount,
@@ -866,6 +838,34 @@ private fun TaskListScreen(
             onToggleComplete = onToggleComplete,
             onDelete = onDelete
         )
+        item {
+            TimecardSection(
+                state = state,
+                onClockIn = onClockIn,
+                onStartLunch = onStartLunch,
+                onEndLunch = onEndLunch,
+                onClockOut = onClockOut,
+                onSaveEntry = onSaveTimecardEntry
+            )
+        }
+        item { ChecklistTemplateSection(state = state, onAddChecklist = onAddChecklist, onOpenPremium = onOpenPremium) }
+        item {
+            OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Event, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Add meeting or work event")
+            }
+        }
+        if (events.isNotEmpty()) {
+            item { Text("Work events", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            items(events, key = { it.id }) { event ->
+                EventCard(
+                    event = event,
+                    onClick = { onEventClick(event) },
+                    onDelete = { onDeleteEvent(event.id) }
+                )
+            }
+        }
     }
 }
 
