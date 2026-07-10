@@ -40,20 +40,35 @@ import java.util.concurrent.TimeUnit
 class TaskAlarmActivity : ComponentActivity() {
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
-    private var taskId: String = ""
-    private var taskTitle: String = ""
+    private var alarmId: String = ""
+    private var alarmTitle: String = ""
+    private var alarmHeading: String = "Task alarm"
+    private var alarmMessage: String = "This reminder is ringing because you set an alarm."
+    private var openButtonLabel: String = "Open task"
+    private var snoozeReceiver: String = SNOOZE_TASK
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         showAboveLockScreen()
-        taskId = intent.getStringExtra(TaskAlarmReceiver.EXTRA_TASK_ID).orEmpty()
-        taskTitle = intent.getStringExtra(TaskAlarmReceiver.EXTRA_TASK_TITLE).orEmpty().ifBlank { "Task alarm" }
+        alarmId = intent.getStringExtra(EXTRA_ALARM_ID)
+            ?: intent.getStringExtra(TaskAlarmReceiver.EXTRA_TASK_ID)
+            ?: ""
+        alarmTitle = intent.getStringExtra(EXTRA_ALARM_TITLE)
+            ?: intent.getStringExtra(TaskAlarmReceiver.EXTRA_TASK_TITLE)
+            ?: "Task alarm"
+        alarmHeading = intent.getStringExtra(EXTRA_ALARM_HEADING) ?: alarmHeading
+        alarmMessage = intent.getStringExtra(EXTRA_ALARM_MESSAGE) ?: alarmMessage
+        openButtonLabel = intent.getStringExtra(EXTRA_OPEN_BUTTON_LABEL) ?: openButtonLabel
+        snoozeReceiver = intent.getStringExtra(EXTRA_SNOOZE_RECEIVER) ?: snoozeReceiver
         startAlarmSignal()
 
         setContent {
             WorkdayPlannerTheme {
                 TaskAlarmScreen(
-                    title = taskTitle,
+                    heading = alarmHeading,
+                    title = alarmTitle,
+                    message = alarmMessage,
+                    openButtonLabel = openButtonLabel,
                     onOpenTask = ::openTask,
                     onSnooze = { snooze(minutes = 10) },
                     onDismiss = ::dismissAlarm
@@ -114,8 +129,8 @@ class TaskAlarmActivity : ComponentActivity() {
         ringtone = null
         vibrator?.cancel()
         vibrator = null
-        if (taskId.isNotBlank()) {
-            getSystemService(NotificationManager::class.java).cancel(taskId.hashCode())
+        if (alarmId.isNotBlank()) {
+            getSystemService(NotificationManager::class.java).cancel(alarmId.hashCode())
         }
     }
 
@@ -126,13 +141,19 @@ class TaskAlarmActivity : ComponentActivity() {
 
     private fun snooze(minutes: Long) {
         stopAlarmSignal()
-        if (taskId.isNotBlank()) {
-            val intent = Intent(this, TaskAlarmReceiver::class.java)
-                .putExtra(TaskAlarmReceiver.EXTRA_TASK_ID, taskId)
-                .putExtra(TaskAlarmReceiver.EXTRA_TASK_TITLE, taskTitle)
+        if (alarmId.isNotBlank()) {
+            val intent = if (snoozeReceiver == SNOOZE_SHIFT) {
+                Intent(this, ShiftAlarmReceiver::class.java)
+                    .putExtra(ShiftAlarmReceiver.EXTRA_SHIFT_ID, alarmId.removePrefix("shift_"))
+                    .putExtra(ShiftAlarmReceiver.EXTRA_SHIFT_TITLE, alarmTitle.removePrefix("Shift alarm: ").trim())
+            } else {
+                Intent(this, TaskAlarmReceiver::class.java)
+                    .putExtra(TaskAlarmReceiver.EXTRA_TASK_ID, alarmId)
+                    .putExtra(TaskAlarmReceiver.EXTRA_TASK_TITLE, alarmTitle)
+            }
             val pendingIntent = PendingIntent.getBroadcast(
                 this,
-                taskId.hashCode(),
+                alarmId.hashCode(),
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
@@ -153,15 +174,31 @@ class TaskAlarmActivity : ComponentActivity() {
         stopAlarmSignal()
         val intent = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra(MainActivity.EXTRA_OPEN_TASK_ID, taskId)
+        if (snoozeReceiver != SNOOZE_SHIFT) {
+            intent.putExtra(MainActivity.EXTRA_OPEN_TASK_ID, alarmId)
+        }
         startActivity(intent)
         finish()
+    }
+
+    companion object {
+        const val EXTRA_ALARM_ID = "alarm_id"
+        const val EXTRA_ALARM_TITLE = "alarm_title"
+        const val EXTRA_ALARM_HEADING = "alarm_heading"
+        const val EXTRA_ALARM_MESSAGE = "alarm_message"
+        const val EXTRA_OPEN_BUTTON_LABEL = "open_button_label"
+        const val EXTRA_SNOOZE_RECEIVER = "snooze_receiver"
+        const val SNOOZE_TASK = "task"
+        const val SNOOZE_SHIFT = "shift"
     }
 }
 
 @Composable
 private fun TaskAlarmScreen(
+    heading: String,
     title: String,
+    message: String,
+    openButtonLabel: String,
     onOpenTask: () -> Unit,
     onSnooze: () -> Unit,
     onDismiss: () -> Unit
@@ -177,7 +214,7 @@ private fun TaskAlarmScreen(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "Task alarm",
+                text = heading,
                 color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold
@@ -191,7 +228,7 @@ private fun TaskAlarmScreen(
             )
             Spacer(Modifier.height(10.dp))
             Text(
-                text = "This reminder is ringing because you set an alarm for this task.",
+                text = message,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyLarge
             )
@@ -200,7 +237,7 @@ private fun TaskAlarmScreen(
                 onClick = onOpenTask,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Open task")
+                Text(openButtonLabel)
             }
             Spacer(Modifier.height(12.dp))
             OutlinedButton(

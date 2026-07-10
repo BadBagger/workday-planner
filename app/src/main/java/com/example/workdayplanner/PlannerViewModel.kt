@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.workdayplanner.alarm.AlarmScheduler
+import com.example.workdayplanner.alarm.ShiftAlarmScheduler
 import com.example.workdayplanner.calendar.CalendarSyncManager
 import com.example.workdayplanner.calendar.DeviceCalendar
 import com.example.workdayplanner.data.AccentStyle
@@ -38,6 +39,7 @@ import com.example.workdayplanner.data.WorkShift
 import com.example.workdayplanner.data.ShiftTemplate
 import com.example.workdayplanner.data.ShiftTemplateKind
 import com.example.workdayplanner.data.ShiftPattern
+import com.example.workdayplanner.data.ShiftAlarmSettings
 import com.example.workdayplanner.data.ScheduleAwareTaskPlanner
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
@@ -58,6 +60,7 @@ import kotlin.math.max
 class PlannerViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = PlannerRepository(application)
     private val alarmScheduler = AlarmScheduler(application)
+    private val shiftAlarmScheduler = ShiftAlarmScheduler(application)
     private val calendarSyncManager = CalendarSyncManager(application)
     val state: StateFlow<AppState> = repository.state
 
@@ -74,6 +77,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         alarmScheduler.rescheduleOpenTasks(state.value.tasks)
+        rescheduleShiftAlarms()
     }
 
     fun saveTask(task: TaskItem) {
@@ -290,13 +294,16 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     fun saveShift(shift: WorkShift) {
         repository.upsertShift(shift)
         rescheduleTasksForShift(shift.id)
+        rescheduleShiftAlarms()
     }
 
     fun deleteShift(shiftId: String) {
         state.value.tasks.filter { it.linkedShiftId == shiftId }.forEach { task ->
             alarmScheduler.cancel(task.id)
         }
+        shiftAlarmScheduler.cancel(shiftId)
         repository.deleteShift(shiftId)
+        rescheduleShiftAlarms()
     }
 
     fun saveShiftPattern(pattern: ShiftPattern) {
@@ -306,6 +313,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     fun applyShiftPattern(pattern: ShiftPattern, allowDuplicates: Boolean) {
         repository.applyShiftPattern(pattern, allowDuplicates)
         alarmScheduler.rescheduleOpenTasks(state.value.tasks)
+        rescheduleShiftAlarms()
     }
 
     fun setShiftPatternEnabled(patternId: String, enabled: Boolean) {
@@ -339,6 +347,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     fun clearSchedule() {
         repository.clearSchedule()
         alarmScheduler.rescheduleOpenTasks(state.value.tasks)
+        rescheduleShiftAlarms()
     }
 
     private fun rescheduleTasksForShift(shiftId: String) {
@@ -378,6 +387,11 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun setPaySettings(settings: PaySettings) {
         repository.setPaySettings(settings)
+    }
+
+    fun setShiftAlarmSettings(settings: ShiftAlarmSettings) {
+        repository.setShiftAlarmSettings(settings)
+        rescheduleShiftAlarms()
     }
 
     fun setMockPremium(enabled: Boolean) {
@@ -496,6 +510,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         val parsed = parsedOverride ?: previewImport()
         val changes = ScheduleChangeDetector.compare(state.value, parsed)
         repository.importSchedule(parsed)
+        rescheduleShiftAlarms()
         if (currentImportState().imageBased) repository.recordScreenshotImport()
         mutableImportState.value = currentImportState().copy(
             parsed = parsed,
@@ -507,6 +522,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun currentImportState() = mutableImportState.value
+
+    private fun rescheduleShiftAlarms() {
+        shiftAlarmScheduler.reschedule(state.value.shifts, state.value.shiftAlarmSettings)
+    }
 
     private fun scheduleImportFailureGuidance(error: Throwable): ScheduleImportGuidance {
         val message = error.message.orEmpty()

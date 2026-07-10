@@ -62,6 +62,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".alarm.ShiftAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".alarm.TaskReminderRescheduleReceiver"
             android:exported="true">
             <intent-filter>

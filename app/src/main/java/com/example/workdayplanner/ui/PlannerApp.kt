@@ -140,6 +140,7 @@ import com.example.workdayplanner.data.ShiftPattern
 import com.example.workdayplanner.data.ShiftPatternDay
 import com.example.workdayplanner.data.ShiftPatternDayKind
 import com.example.workdayplanner.data.ShiftPatternGenerator
+import com.example.workdayplanner.data.ShiftAlarmSettings
 import com.example.workdayplanner.data.TimecardCalculator
 import com.example.workdayplanner.data.TimecardEntry
 import com.example.workdayplanner.data.TrainingItem
@@ -384,12 +385,14 @@ fun PlannerApp(
                         onAccentStyleChanged = viewModel::setAccentStyle,
                         onWidgetLayoutModeChanged = viewModel::setWidgetLayoutMode,
                         onPaySettingsChanged = viewModel::setPaySettings,
+                        onShiftAlarmSettingsChanged = viewModel::setShiftAlarmSettings,
                         calendars = calendars,
                         calendarMessage = calendarMessage,
                         onLoadCalendars = viewModel::loadCalendars,
                         onSelectCalendar = viewModel::setSelectedCalendar,
                         onSyncCalendar = viewModel::syncShiftsToCalendar,
                         onMockPremiumChanged = viewModel::setMockPremium,
+                        onNotificationPermissionNeeded = onNotificationPermissionNeeded,
                         onOpenPremium = { showPremiumScreen = true }
                     )
                 }
@@ -4769,12 +4772,14 @@ private fun SettingsScreen(
     onAccentStyleChanged: (AccentStyle) -> Unit,
     onWidgetLayoutModeChanged: (WidgetLayoutMode) -> Unit,
     onPaySettingsChanged: (PaySettings) -> Unit,
+    onShiftAlarmSettingsChanged: (ShiftAlarmSettings) -> Unit,
     calendars: List<DeviceCalendar>,
     calendarMessage: String?,
     onLoadCalendars: () -> Unit,
     onSelectCalendar: (Long?) -> Unit,
     onSyncCalendar: () -> Unit,
     onMockPremiumChanged: (Boolean) -> Unit,
+    onNotificationPermissionNeeded: () -> Unit,
     onOpenPremium: () -> Unit
 ) {
     Column(
@@ -4793,6 +4798,11 @@ private fun SettingsScreen(
             onPaySettingsChanged = onPaySettingsChanged,
             onOpenPremium = onOpenPremium
         )
+        ShiftAlarmSettingsSection(
+            state = state,
+            onSettingsChanged = onShiftAlarmSettingsChanged,
+            onNotificationPermissionNeeded = onNotificationPermissionNeeded
+        )
         CalendarSyncSection(
             state = state,
             calendars = calendars,
@@ -4803,6 +4813,103 @@ private fun SettingsScreen(
             onOpenPremium = onOpenPremium
         )
         PremiumSettingsSection(state = state, onMockPremiumChanged = onMockPremiumChanged, onOpenPremium = onOpenPremium)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ShiftAlarmSettingsSection(
+    state: AppState,
+    onSettingsChanged: (ShiftAlarmSettings) -> Unit,
+    onNotificationPermissionNeeded: () -> Unit
+) {
+    val context = LocalContext.current
+    val settings = state.shiftAlarmSettings
+    val nextShift = state.shifts
+        .filter { LocalDateTime.of(it.date, it.start).isAfter(LocalDateTime.now()) }
+        .sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start })
+        .firstOrNull()
+    val nextAlarm = nextShift?.let { LocalDateTime.of(it.date, it.start).minusMinutes(settings.offsetMinutes.toLong()) }
+    fun askPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            onNotificationPermissionNeeded()
+        }
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader("Shift alarms", "Ring before saved or imported shifts.")
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Wake-up alarm before shifts", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Uses the same full alarm screen as task reminders.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = settings.enabled,
+                    onCheckedChange = {
+                        if (it) askPermissionIfNeeded()
+                        onSettingsChanged(settings.copy(enabled = it))
+                    }
+                )
+            }
+            Text("Alarm offset", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(30, 60, 80, 90, 120).forEach { minutes ->
+                    FilterChip(
+                        selected = settings.offsetMinutes == minutes,
+                        onClick = { onSettingsChanged(settings.copy(offsetMinutes = minutes)) },
+                        label = { Text(shiftAlarmOffsetLabel(minutes)) }
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = settings.offsetMinutes.toString(),
+                onValueChange = { value ->
+                    value.filter(Char::isDigit).take(4).toIntOrNull()?.let { minutes ->
+                        onSettingsChanged(settings.copy(offsetMinutes = minutes.coerceIn(0, 24 * 60)))
+                    }
+                },
+                label = { Text("Custom minutes before shift") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Only early shifts", style = MaterialTheme.typography.bodyLarge)
+                    Text("Skip alarms for shifts starting at 9 AM or later.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(
+                    checked = settings.onlyEarlyShifts,
+                    onCheckedChange = { onSettingsChanged(settings.copy(onlyEarlyShifts = it)) }
+                )
+            }
+            val summary = when {
+                !settings.enabled -> "Shift alarms are off."
+                nextShift == null -> "Add or import shifts and Workday Planner will schedule alarms before them."
+                nextAlarm != null -> "Next alarm: ${nextAlarm.format(dateTimeFormatter)} for ${nextShift.start.format(timeFormatter)} shift."
+                else -> "Next shift alarm will follow your saved schedule."
+            }
+            Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+private fun shiftAlarmOffsetLabel(minutes: Int): String {
+    val hours = minutes / 60
+    val remaining = minutes % 60
+    return when {
+        hours == 0 -> "$remaining min"
+        remaining == 0 -> "${hours} hr"
+        else -> "${hours} hr ${remaining} min"
     }
 }
 

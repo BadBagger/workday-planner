@@ -263,6 +263,13 @@ data class PaySettings(
     val estimatedDeductionRate: Double = 5.0
 )
 
+data class ShiftAlarmSettings(
+    val enabled: Boolean = false,
+    val offsetMinutes: Int = 80,
+    val onlyEarlyShifts: Boolean = false,
+    val earlyShiftCutoffHour: Int = 9
+)
+
 enum class PayPeriodType(val label: String) {
     Weekly("Weekly"),
     Biweekly("Biweekly"),
@@ -317,6 +324,7 @@ data class AppState(
     val widgetLayoutMode: WidgetLayoutMode = WidgetLayoutMode.Standard,
     val selectedCalendarId: Long? = null,
     val paySettings: PaySettings = PaySettings(),
+    val shiftAlarmSettings: ShiftAlarmSettings = ShiftAlarmSettings(),
     val timecards: List<TimecardEntry> = emptyList(),
     val trainingItems: List<TrainingItem> = emptyList(),
     val shiftTemplates: List<ShiftTemplate> = emptyList(),

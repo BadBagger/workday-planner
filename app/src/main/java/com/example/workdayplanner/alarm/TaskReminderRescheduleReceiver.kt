@@ -11,6 +11,7 @@ class TaskReminderRescheduleReceiver : BroadcastReceiver() {
         if (action !in supportedActions) return
         val repository = PlannerRepository(context)
         AlarmScheduler(context).rescheduleOpenTasks(repository.state.value.tasks)
+        ShiftAlarmScheduler(context).reschedule(repository.state.value.shifts, repository.state.value.shiftAlarmSettings)
     }
 
     companion object {

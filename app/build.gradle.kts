@@ -20,8 +20,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 58
-        versionName = "2.38-full-task-alarms"
+        versionCode = 59
+        versionName = "2.39-shift-alarms"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

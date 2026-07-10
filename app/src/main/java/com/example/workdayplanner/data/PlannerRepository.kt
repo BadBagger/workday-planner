@@ -176,6 +176,10 @@ class PlannerRepository(context: Context) {
         state.copy(paySettings = settings)
     }
 
+    fun setShiftAlarmSettings(settings: ShiftAlarmSettings) = update { state ->
+        state.copy(shiftAlarmSettings = settings)
+    }
+
     fun setMockPremium(enabled: Boolean) = update { state ->
         state.copy(premium = state.premium.copy(mockPremiumEnabled = enabled, isPremium = false))
     }
@@ -254,6 +258,7 @@ class PlannerRepository(context: Context) {
                 null
             },
             paySettings = root.optJSONObject("paySettings")?.let(::paySettingsFromJson) ?: PaySettings(),
+            shiftAlarmSettings = root.optJSONObject("shiftAlarmSettings")?.let(::shiftAlarmSettingsFromJson) ?: ShiftAlarmSettings(),
             timecards = root.optJSONArray("timecards").toObjects(::timecardFromJson),
             trainingItems = root.optJSONArray("trainingItems").toObjects(::trainingItemFromJson),
             shiftTemplates = root.optJSONArray("shiftTemplates").toObjects(::shiftTemplateFromJson),
@@ -282,6 +287,7 @@ class PlannerRepository(context: Context) {
             .put("widgetLayoutMode", state.widgetLayoutMode.name)
             .put("selectedCalendarId", state.selectedCalendarId)
             .put("paySettings", paySettingsToJson(state.paySettings))
+            .put("shiftAlarmSettings", shiftAlarmSettingsToJson(state.shiftAlarmSettings))
             .put("timecards", JSONArray(state.timecards.map(::timecardToJson)))
             .put("trainingItems", JSONArray(state.trainingItems.map(::trainingItemToJson)))
             .put("shiftTemplates", JSONArray(state.shiftTemplates.map(::shiftTemplateToJson)))
@@ -430,6 +436,19 @@ class PlannerRepository(context: Context) {
         showPayOnDashboard = json.optBoolean("showPayOnDashboard", false),
         estimatedTaxRate = json.optDouble("estimatedTaxRate", 18.0).coerceIn(0.0, 100.0),
         estimatedDeductionRate = json.optDouble("estimatedDeductionRate", 5.0).coerceIn(0.0, 100.0)
+    )
+
+    private fun shiftAlarmSettingsToJson(settings: ShiftAlarmSettings) = JSONObject()
+        .put("enabled", settings.enabled)
+        .put("offsetMinutes", settings.offsetMinutes)
+        .put("onlyEarlyShifts", settings.onlyEarlyShifts)
+        .put("earlyShiftCutoffHour", settings.earlyShiftCutoffHour)
+
+    private fun shiftAlarmSettingsFromJson(json: JSONObject) = ShiftAlarmSettings(
+        enabled = json.optBoolean("enabled", false),
+        offsetMinutes = json.optInt("offsetMinutes", 80).coerceIn(0, 24 * 60),
+        onlyEarlyShifts = json.optBoolean("onlyEarlyShifts", false),
+        earlyShiftCutoffHour = json.optInt("earlyShiftCutoffHour", 9).coerceIn(0, 23)
     )
 
     private fun timecardToJson(entry: TimecardEntry) = JSONObject()
