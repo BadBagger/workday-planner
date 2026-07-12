@@ -344,6 +344,13 @@ fun PlannerApp(
         }
     }
 
+    fun openPremium() {
+        showPremiumScreen = true
+        navController.navigate(Screen.Settings.route) {
+            launchSingleTop = true
+        }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -357,8 +364,8 @@ fun PlannerApp(
                     currentRoute == Screen.WeeklyReview.route -> "Weekly Review"
                     currentRoute == Screen.Schedule.route -> "Schedule"
                     currentRoute == Screen.Import.route -> "Import"
-                    currentRoute == Screen.Settings.route -> "Settings"
                     showPremiumScreen -> "Premium"
+                    currentRoute == Screen.Settings.route -> "Settings"
                     currentRoute == Screen.Tasks.route -> "Today"
                     else -> "Workday Planner"
                 }
@@ -371,6 +378,7 @@ fun PlannerApp(
                         NavigationBarItem(
                             selected = currentRoute == screen.route,
                             onClick = {
+                                showPremiumScreen = false
                                 navController.navigate(screen.route) {
                                     popUpTo(Screen.Tasks.route)
                                     launchSingleTop = true
@@ -452,7 +460,7 @@ fun PlannerApp(
                     onSaveTimecardEntry = viewModel::saveTimecardEntry,
                     onAddChecklist = viewModel::addChecklistTemplate,
                     onSaveVoiceTask = viewModel::saveTask,
-                    onOpenPremium = { showPremiumScreen = true }
+                    onOpenPremium = ::openPremium
                 )
             }
             composable(Screen.Notes.route) {
@@ -509,7 +517,7 @@ fun PlannerApp(
                     onRemoveDayOff = viewModel::removeDayOff,
                     onClearSchedule = viewModel::clearSchedule,
                     onImportSchedule = { navController.navigate(Screen.Import.route) },
-                    onOpenPremium = { showPremiumScreen = true }
+                    onOpenPremium = ::openPremium
                 )
             }
             composable(Screen.Import.route) {
@@ -534,7 +542,7 @@ fun PlannerApp(
                         }
                     },
                     onStartOver = viewModel::resetScheduleImport,
-                    onOpenPremium = { showPremiumScreen = true }
+                    onOpenPremium = ::openPremium
                 )
             }
             composable(Screen.Settings.route) {
@@ -560,7 +568,7 @@ fun PlannerApp(
                         onSyncCalendar = viewModel::syncShiftsToCalendar,
                         onNotificationPermissionNeeded = onNotificationPermissionNeeded,
                         onTesterModeChanged = viewModel::setMockPremium,
-                        onOpenPremium = { showPremiumScreen = true }
+                        onOpenPremium = ::openPremium
                     )
                 }
             }
@@ -580,7 +588,7 @@ fun PlannerApp(
                     onSaveTaskTemplate = viewModel::saveTaskTemplate,
                     onDeleteTaskTemplate = viewModel::deleteTaskTemplate,
                     onNotificationPermissionNeeded = onNotificationPermissionNeeded,
-                    onOpenPremium = { showPremiumScreen = true },
+                    onOpenPremium = ::openPremium,
                     onCancel = { navController.popBackStack() }
                 )
             }
@@ -1065,7 +1073,7 @@ private fun TaskListScreen(
                 onClockOut = onClockOut,
                 onSaveEntry = onSaveTimecardEntry
             )
-            ChecklistTemplateSection(state = state, onAddChecklist = onAddChecklist, onOpenPremium = onOpenPremium)
+            ChecklistTemplateSection(onAddChecklist = onAddChecklist)
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Event, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -1241,7 +1249,7 @@ private fun TaskListScreen(
                 onSaveEntry = onSaveTimecardEntry
             )
         }
-        item { ChecklistTemplateSection(state = state, onAddChecklist = onAddChecklist, onOpenPremium = onOpenPremium) }
+        item { ChecklistTemplateSection(onAddChecklist = onAddChecklist) }
         item {
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Event, contentDescription = null)
@@ -2846,12 +2854,13 @@ private fun voiceTaskSummary(task: TaskItem): String {
     val due = task.deadline?.let { "Due ${it.format(timeFormatter)}" }
     val alarm = task.alarmAt?.let {
         when (task.alarmDispatchStatus) {
-            AlarmDispatchStatus.SentToSystemClock -> "Alarm sent to Clock for ${it.format(timeFormatter)}"
-            AlarmDispatchStatus.SystemClockFallbackScheduled -> "Clock unavailable; Workday Planner alarm ${it.format(timeFormatter)}"
-            AlarmDispatchStatus.ExactAlarmAccessNeeded -> "Alarm access needed for ${it.format(timeFormatter)}"
-            AlarmDispatchStatus.ScheduledInApp -> "Workday Planner alarm ${it.format(timeFormatter)}"
-            AlarmDispatchStatus.ScheduledNotification -> "Notification ${it.format(timeFormatter)}"
-            else -> "Alarm ${it.format(timeFormatter)}"
+            AlarmDispatchStatus.SentToSystemClock -> "Clock alarm sent for ${it.format(timeFormatter)}"
+            AlarmDispatchStatus.SystemClockFallbackScheduled -> "Clock unavailable; Workday Planner full alarm set for ${it.format(timeFormatter)}"
+            AlarmDispatchStatus.ExactAlarmAccessNeeded -> "Alarm access needed before ${it.format(timeFormatter)} can ring"
+            AlarmDispatchStatus.ScheduledInApp -> "Workday Planner full alarm set for ${it.format(timeFormatter)}"
+            AlarmDispatchStatus.ScheduledNotification -> "Notification reminder set for ${it.format(timeFormatter)}"
+            AlarmDispatchStatus.SkippedPastAlarm -> "Alarm time already passed"
+            else -> "Alarm set for ${it.format(timeFormatter)}"
         }
     }
     return listOfNotNull(due, alarm).ifEmpty { listOf("Task saved without an alarm") }.joinToString(" • ")
@@ -3083,8 +3092,8 @@ private fun LocalDate.workStatusLabel(state: AppState, todayShifts: List<WorkShi
         kind == ShiftTemplateKind.Sick -> "Sick Day"
         this in state.daysOff || kind == ShiftTemplateKind.DayOff -> "Day Off"
         todayShifts.isNotEmpty() -> "Workday"
-        state.shifts.isEmpty() && state.daysOff.isEmpty() -> "Unknown"
-        else -> "Unknown"
+        state.shifts.isEmpty() && state.daysOff.isEmpty() -> "No schedule"
+        else -> "No shift"
     }
 }
 
@@ -3942,8 +3951,7 @@ private fun Double.toSignedHours(): String {
 }
 
 @Composable
-private fun ChecklistTemplateSection(state: AppState, onAddChecklist: (String) -> Unit, onOpenPremium: () -> Unit) {
-    val unlocked = PremiumAccess.canUse(state, PremiumFeature.TaskTemplates)
+private fun ChecklistTemplateSection(onAddChecklist: (String) -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
@@ -3951,10 +3959,6 @@ private fun ChecklistTemplateSection(state: AppState, onAddChecklist: (String) -
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SectionHeader("Checklist templates", "Add a work routine to today's tasks.")
-            if (!unlocked) {
-                PremiumLockedInline(PremiumFeature.TaskTemplates, "Free tasks stay available. Premium unlocks reusable checklist templates.", onOpenPremium)
-                return@Column
-            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 WorkChecklistTemplates.all.forEach { template ->
                     OutlinedButton(onClick = { onAddChecklist(template.id) }) {
@@ -5090,7 +5094,7 @@ private fun TaskDetailScreen(
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f)) {
                         Text("Reminder", style = MaterialTheme.typography.bodyLarge)
-                        Text("Task reminders use a full alarm screen with sound and vibration.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Default: ${state.alarmSettings.defaultAlarmDelivery.label}, ${reminderOffsetLabel(state.alarmSettings.defaultReminderOffsetMinutes)}.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("Workday Planner only alarms for tasks you create.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("You can turn reminders off anytime.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -5123,20 +5127,26 @@ private fun TaskDetailScreen(
                 }
                 WorkdayAnimatedVisibility(visible = showMoreRules) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (!advancedRulesUnlocked) {
-                        PremiumLockedInline(PremiumFeature.AdvancedTaskRules, "Basic deadlines and reminders stay free. Premium unlocks shift-aware repeat and carry-over rules.", onOpenPremium)
-                        return@Column
-                    }
                 Text("Repeat", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 RepeatRuleChips(selected = repeatRule, onSelected = {
-                    repeatRule = it
-                    if (it != RepeatRule.CustomDays) repeatDays = emptySet()
-                    linkedShiftType = when (it) {
-                        RepeatRule.OpeningShifts -> LinkedShiftType.Opening
-                        RepeatRule.ClosingShifts -> LinkedShiftType.Closing
-                        RepeatRule.TruckDays -> LinkedShiftType.Truck
-                        RepeatRule.InventoryDays -> LinkedShiftType.Inventory
-                        else -> linkedShiftType
+                    val premiumRepeat = it in setOf(
+                        RepeatRule.OpeningShifts,
+                        RepeatRule.ClosingShifts,
+                        RepeatRule.TruckDays,
+                        RepeatRule.InventoryDays
+                    )
+                    if (premiumRepeat && !advancedRulesUnlocked) {
+                        onOpenPremium()
+                    } else {
+                        repeatRule = it
+                        if (it != RepeatRule.CustomDays) repeatDays = emptySet()
+                        linkedShiftType = when (it) {
+                            RepeatRule.OpeningShifts -> LinkedShiftType.Opening
+                            RepeatRule.ClosingShifts -> LinkedShiftType.Closing
+                            RepeatRule.TruckDays -> LinkedShiftType.Truck
+                            RepeatRule.InventoryDays -> LinkedShiftType.Inventory
+                            else -> linkedShiftType
+                        }
                     }
                 })
                 WorkdayAnimatedVisibility(visible = showAdvancedRepeat || repeatRule == RepeatRule.CustomDays) {
@@ -5157,8 +5167,12 @@ private fun TaskDetailScreen(
                     Checkbox(checked = skipDaysOff, onCheckedChange = { skipDaysOff = it })
                     Text("Skip days off")
                 }
-                LinkedShiftTypeChips(selected = linkedShiftType, onSelected = { linkedShiftType = it })
-                CarryOverChips(selected = carryOverBehavior, onSelected = { carryOverBehavior = it })
+                if (!advancedRulesUnlocked) {
+                    PremiumLockedInline(PremiumFeature.AdvancedTaskRules, "Free includes basic repeats and skip-days-off. Premium adds shift-type rules and carry-over behavior.", onOpenPremium)
+                } else {
+                    LinkedShiftTypeChips(selected = linkedShiftType, onSelected = { linkedShiftType = it })
+                    CarryOverChips(selected = carryOverBehavior, onSelected = { carryOverBehavior = it })
+                }
                     }
                 }
             }
@@ -5248,9 +5262,6 @@ private fun TaskTemplateChips(
                 editorOpen = !editorOpen
             }) { Text(if (editorOpen) "Hide" else "Create") }
         }
-        if (!premiumUnlocked) {
-            PremiumLockedInline(PremiumFeature.TaskTemplates, "Basic task entry stays free. Premium unlocks reusable templates.", onOpenPremium)
-        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             templates.forEach { template ->
                 OutlinedButton(onClick = { onApply(template) }) {
@@ -5258,12 +5269,26 @@ private fun TaskTemplateChips(
                 }
             }
         }
+        if (!premiumUnlocked) {
+            PremiumLockedInline(PremiumFeature.TaskTemplates, "Built-in task templates are free. Premium unlocks custom template creation and editing.", onOpenPremium)
+        }
+        if (!premiumUnlocked && templates.any { !it.builtIn }) {
+            Text(
+                "Saved custom templates stay visible. Premium is needed to edit or create more.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         templates.filterNot { it.builtIn }.forEach { template ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(template.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                 TextButton(onClick = {
-                    editing = template
-                    editorOpen = true
+                    if (premiumUnlocked) {
+                        editing = template
+                        editorOpen = true
+                    } else {
+                        onOpenPremium()
+                    }
                 }) { Text("Edit") }
                 TextButton(onClick = { onDeleteTemplate(template.id) }) { Text("Delete") }
             }
@@ -7332,7 +7357,7 @@ private fun PremiumSettingsSection(
                 Column(Modifier.weight(1f)) {
                     Text("Tester mode", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Unlocks unlimited imports and premium planning tools for beta testing on this device.",
+                        "Closed-test access for this device: unlimited imports, style packs, and premium planning tools. No purchase or subscription starts here.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -7380,7 +7405,7 @@ private fun PremiumScreen(
                         Column(Modifier.weight(1f)) {
                             Text("Tester mode", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                             Text(
-                                "Unlock premium for closed testing on this device.",
+                                "Use this for closed testing. It unlocks premium features locally and does not charge the tester.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -7695,12 +7720,8 @@ private fun ImportScreen(
             minLines = 8,
             modifier = Modifier.fillMaxWidth().height(230.dp)
         )
-        OutlinedButton(onClick = onPreview, enabled = rawText.isNotBlank() && !isReading, modifier = Modifier.fillMaxWidth()) {
-            Text(if (parsed == null) "Review detected shifts" else "Refresh detected shifts")
-        }
         if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
         guidance?.let { ScheduleImportGuidanceCard(it) }
-        if (message != null) Text(message, color = MaterialTheme.colorScheme.secondary)
         parsed?.let {
             if (rawText.isNotBlank() && it.shifts.isEmpty() && it.daysOff.isEmpty()) {
                 Text(
@@ -7967,9 +7988,10 @@ private fun ImportProgressCard(
     hasPreview: Boolean,
     completeMessage: String?
 ) {
+    val importSaved = completeMessage?.startsWith("Added or updated") == true
     val stage = when {
         isReading -> "Reading image"
-        completeMessage != null -> "Import complete"
+        importSaved -> "Import complete"
         hasPreview -> "Reviewing results"
         else -> null
     } ?: return

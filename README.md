@@ -4,13 +4,15 @@ Native Android work planner built with Kotlin, Jetpack Compose, local storage, n
 
 ## Features
 
+- Today dashboard for shifts, tasks, reminders, timecard, and watch-outs
 - Task list with deadlines, notes, alarms, completion, and deletion
-- Repeating tasks: none, daily, weekdays, or weekly
+- Repeating tasks: none, daily, weekdays, weekly, every workday, or custom days
 - Days off tracked manually or imported from schedule text
+- Built-in work checklist/task templates stay free; Premium is limited to convenience and power-user tools
 - Screenshot import using Google ML Kit on-device text recognition, no API key or paid service
 - Local-only storage with `SharedPreferences`
-- Compose Navigation across Tasks, Schedule, Import, and Task detail screens
-- Android notifications for task alarms
+- Compose Navigation across Today, Notes, Schedule, Manager, Settings, Import, and task detail screens
+- Full task/shift alarm support with local app alarms and system Clock handoff where available
 
 ## Run In Android Studio
 

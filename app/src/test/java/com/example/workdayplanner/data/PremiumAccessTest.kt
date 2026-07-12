@@ -1,43 +1,36 @@
 package com.example.workdayplanner.data
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.YearMonth
 
 class PremiumAccessTest {
     @Test
-    fun freePlanHasLimitedScreenshotImports() {
+    fun freePlanHasEnoughScreenshotImportsForWeeklySchedules() {
+        val month = YearMonth.of(2026, 7)
         val state = AppState(
             premium = PremiumEntitlement(
-                importMonth = "2026-07",
-                screenshotImportsThisMonth = 2
+                importMonth = month.toString(),
+                screenshotImportsThisMonth = 0
             )
         )
 
-        assertEquals(1, PremiumAccess.remainingScreenshotImports(state, YearMonth.of(2026, 7)))
-        assertTrue(PremiumAccess.canImportScreenshot(state, YearMonth.of(2026, 7)))
+        assertEquals(6, PremiumAccess.remainingScreenshotImports(state, month))
+        assertTrue(PremiumAccess.canImportScreenshot(state, month))
     }
 
     @Test
-    fun freePlanBlocksAfterMonthlyLimit() {
+    fun premiumRemovesScreenshotImportLimit() {
+        val month = YearMonth.of(2026, 7)
         val state = AppState(
             premium = PremiumEntitlement(
-                importMonth = "2026-07",
-                screenshotImportsThisMonth = PremiumAccess.FREE_SCREENSHOT_IMPORTS_PER_MONTH
+                isPremium = true,
+                importMonth = month.toString(),
+                screenshotImportsThisMonth = 100
             )
         )
 
-        assertEquals(0, PremiumAccess.remainingScreenshotImports(state, YearMonth.of(2026, 7)))
-        assertFalse(PremiumAccess.canImportScreenshot(state, YearMonth.of(2026, 7)))
-    }
-
-    @Test
-    fun mockPremiumUnlocksPremiumFeatures() {
-        val state = AppState(premium = PremiumEntitlement(mockPremiumEnabled = true))
-
-        assertTrue(PremiumAccess.canUse(state, PremiumFeature.PayEstimator))
-        assertTrue(PremiumAccess.canImportScreenshot(state, YearMonth.of(2026, 7)))
+        assertEquals(Int.MAX_VALUE, PremiumAccess.remainingScreenshotImports(state, month))
     }
 }

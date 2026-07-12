@@ -393,13 +393,13 @@ enum class PayPeriodType(val label: String) {
 }
 
 enum class PremiumFeature(val title: String, val value: String) {
-    UnlimitedImports("Unlimited screenshot imports", "Import as many schedule screenshots as you need."),
-    AdvancedOcr("Advanced OCR correction", "Review, fix, and confirm messy schedule scans faster."),
+    UnlimitedImports("Unlimited screenshot imports", "Free includes several imports each month; Premium removes the monthly limit."),
+    AdvancedOcr("Advanced OCR correction", "Power tools for messy schedule scans and faster cleanup."),
     ShiftPatterns("Rotating shift patterns", "Generate 4-on/4-off, 5-on/2-off, and custom cycles."),
     PayEstimator("Pay and overtime estimator", "Estimate scheduled gross pay before payday."),
     CalendarSync("Calendar export/sync", "Copy your work schedule to your device calendar."),
-    TaskTemplates("Task templates", "Reuse opening, closing, truck, and checklist routines."),
-    AdvancedTaskRules("Advanced task rules", "Link tasks to shifts, workdays, and carry-over behavior."),
+    TaskTemplates("Custom task templates", "Built-in routines stay free; Premium lets you create and edit your own templates."),
+    AdvancedTaskRules("Advanced task rules", "Basic repeats and day-off skipping stay free; Premium adds shift-type automation and carry-over behavior."),
     Widgets("Widgets", "See workday details from your home screen."),
     BackupExport("Backup/export", "Export local data when you need a copy."),
     ThemeCustomization("Theme customization", "Adjust accent and widget display styles.")

@@ -598,6 +598,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         mutableImportState.value = currentImportState().copy(
             parsed = parsed,
             changes = changes,
+            appliedMessage = "Preview ready. Review before saving; nothing has been added yet.",
             error = null,
             guidance = ScheduleImportGuidanceClassifier.fromParsedText(rawText, parsed)
         )

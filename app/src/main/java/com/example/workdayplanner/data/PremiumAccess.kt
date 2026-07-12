@@ -3,7 +3,7 @@ package com.example.workdayplanner.data
 import java.time.YearMonth
 
 object PremiumAccess {
-    const val FREE_SCREENSHOT_IMPORTS_PER_MONTH = 3
+    const val FREE_SCREENSHOT_IMPORTS_PER_MONTH = 6
 
     fun canUse(state: AppState, feature: PremiumFeature): Boolean {
         return state.premium.has(feature)
