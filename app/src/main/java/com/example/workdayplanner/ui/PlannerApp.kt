@@ -447,6 +447,7 @@ fun PlannerApp(
                 if (showPremiumScreen) {
                     PremiumScreen(
                         state = state,
+                        onTesterModeChanged = viewModel::setMockPremium,
                         onBack = { showPremiumScreen = false }
                     )
                 } else {
@@ -464,6 +465,7 @@ fun PlannerApp(
                         onSelectCalendar = viewModel::setSelectedCalendar,
                         onSyncCalendar = viewModel::syncShiftsToCalendar,
                         onNotificationPermissionNeeded = onNotificationPermissionNeeded,
+                        onTesterModeChanged = viewModel::setMockPremium,
                         onOpenPremium = { showPremiumScreen = true }
                     )
                 }
@@ -1963,7 +1965,7 @@ private fun CommandCenterCard(
             voiceError = "Couldn't hear that. Tap to try again."
             return
         }
-        val parsed = VoiceTaskParser.parse(transcript)
+        val parsed = parseVoiceTaskResults(transcript, state).firstOrNull() ?: VoiceTaskParser.parse(transcript)
         if ("AM/PM unclear" in parsed.ambiguityReasons && parsed.dueAt != null) {
             ambiguousVoiceTask = parsed
             partialTranscript = transcript
@@ -2787,7 +2789,7 @@ private fun VoiceTaskAmbiguityCard(
     }
 }
 
-private fun parseVoiceTaskResults(transcript: String, state: AppState): List<VoiceTaskParseResult> {
+internal fun parseVoiceTaskResults(transcript: String, state: AppState): List<VoiceTaskParseResult> {
     val shiftAware = applyShiftRelativeVoiceTerms(transcript, state)
     val parts = splitClearMultiTaskSentence(shiftAware)
     return parts.map { VoiceTaskParser.parse(it) }
@@ -2806,18 +2808,25 @@ private fun splitClearMultiTaskSentence(transcript: String): List<String> {
     }.filter { it.isNotBlank() }
 }
 
-private fun applyShiftRelativeVoiceTerms(transcript: String, state: AppState): String {
+internal fun applyShiftRelativeVoiceTerms(transcript: String, state: AppState): String {
     val lower = transcript.lowercase()
+    val targetDate = spokenDateForShiftRelativePhrase(lower)
     val shift = state.shifts
-        .filter { it.date == LocalDate.now() || it.date == LocalDate.now().plusDays(1) }
+        .filter {
+            when (targetDate) {
+                null -> it.date == LocalDate.now() || it.date == LocalDate.now().plusDays(1)
+                else -> it.date == targetDate
+            }
+        }
         .sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start })
         .firstOrNull() ?: return transcript
-    val closing = LocalDateTime.of(shift.date, shift.end)
-    val start = LocalDateTime.of(shift.date, shift.start)
+    val closing = shift.endDateTime()
+    val start = shift.startDateTime()
     val replacementTime = when {
         "one hour before closing" in lower -> closing.minusHours(1)
         "halfway through my shift" in lower -> start.plusMinutes(Duration.between(start, closing).toMinutes() / 2)
         "at the start of my shift" in lower || "before my shift" in lower -> start
+        "after work" in lower || "after my shift" in lower || "after shift" in lower -> closing
         "at closing" in lower || "before closing" in lower -> closing
         "after lunch" in lower -> start.plusHours(5)
         "before lunch" in lower -> start.plusHours(4)
@@ -2826,7 +2835,31 @@ private fun applyShiftRelativeVoiceTerms(transcript: String, state: AppState): S
     return transcript
         .replace(Regex("one hour before closing", RegexOption.IGNORE_CASE), "at ${replacementTime.format(timeFormatter)}")
         .replace(Regex("halfway through my shift", RegexOption.IGNORE_CASE), "at ${replacementTime.format(timeFormatter)}")
-        .replace(Regex("at the start of my shift|before my shift|at closing|before closing|after lunch|before lunch", RegexOption.IGNORE_CASE), "at ${replacementTime.format(timeFormatter)}")
+        .replace(Regex("at the start of my shift|before my shift|after work|after my shift|after shift|at closing|before closing|after lunch|before lunch", RegexOption.IGNORE_CASE), "at ${replacementTime.format(timeFormatter)}")
+}
+
+internal fun spokenDateForShiftRelativePhrase(lower: String, today: LocalDate = LocalDate.now()): LocalDate? {
+    Regex("\\b(next\\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\\b", RegexOption.IGNORE_CASE)
+        .find(lower)
+        ?.let { match ->
+            val day = when (match.groupValues[2].lowercase()) {
+                "monday", "mon" -> DayOfWeek.MONDAY
+                "tuesday", "tue", "tues" -> DayOfWeek.TUESDAY
+                "wednesday", "wed" -> DayOfWeek.WEDNESDAY
+                "thursday", "thu", "thur", "thurs" -> DayOfWeek.THURSDAY
+                "friday", "fri" -> DayOfWeek.FRIDAY
+                "saturday", "sat" -> DayOfWeek.SATURDAY
+                else -> DayOfWeek.SUNDAY
+            }
+            var daysUntil = (day.value - today.dayOfWeek.value + 7) % 7
+            if (daysUntil == 0 || match.groupValues[1].isNotBlank()) daysUntil += 7
+            return today.plusDays(daysUntil.toLong())
+        }
+    return when {
+        Regex("\\btomorrow\\b", RegexOption.IGNORE_CASE).containsMatchIn(lower) -> today.plusDays(1)
+        Regex("\\btoday\\b", RegexOption.IGNORE_CASE).containsMatchIn(lower) -> today
+        else -> null
+    }
 }
 
 private fun applyVoiceTaskCorrection(task: TaskItem, transcript: String): TaskItem? {
@@ -4624,7 +4657,7 @@ private fun TaskDetailScreen(
             voiceError = "Couldn't hear that. Tap to try again."
             return
         }
-        val parsed = VoiceTaskParser.parse(transcript)
+        val parsed = parseVoiceTaskResults(transcript, state).firstOrNull() ?: VoiceTaskParser.parse(transcript)
         if ("AM/PM unclear" in parsed.ambiguityReasons && parsed.dueAt != null) {
             ambiguousEditorVoiceTask = parsed
             voiceTranscript = transcript
@@ -6822,6 +6855,7 @@ private fun SettingsScreen(
     onSelectCalendar: (Long?) -> Unit,
     onSyncCalendar: () -> Unit,
     onNotificationPermissionNeeded: () -> Unit,
+    onTesterModeChanged: (Boolean) -> Unit,
     onOpenPremium: () -> Unit
 ) {
     Column(
@@ -6859,7 +6893,11 @@ private fun SettingsScreen(
             onSyncCalendar = onSyncCalendar,
             onOpenPremium = onOpenPremium
         )
-        PremiumSettingsSection(state = state, onOpenPremium = onOpenPremium)
+        PremiumSettingsSection(
+            state = state,
+            onTesterModeChanged = onTesterModeChanged,
+            onOpenPremium = onOpenPremium
+        )
     }
 }
 
@@ -7100,6 +7138,7 @@ private fun reminderOffsetLabel(minutes: Int): String = when (minutes) {
 @Composable
 private fun PremiumSettingsSection(
     state: AppState,
+    onTesterModeChanged: (Boolean) -> Unit,
     onOpenPremium: () -> Unit
 ) {
     Card(
@@ -7111,6 +7150,27 @@ private fun PremiumSettingsSection(
             SectionHeader("Premium", "Free stays useful. Premium adds convenience for power users.")
             Text(if (state.premium.has(PremiumFeature.UnlimitedImports)) "Premium active" else "Free plan", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
             Text("Premium options are shown for planning. Purchases are not available in this build.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Tester mode", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Unlocks unlimited imports and premium planning tools for beta testing on this device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = state.premium.mockPremiumEnabled,
+                    onCheckedChange = onTesterModeChanged
+                )
+            }
+            if (state.premium.mockPremiumEnabled) {
+                AssistChip(
+                    onClick = {},
+                    label = { Text("Beta testing unlocked") },
+                    leadingIcon = { Icon(Icons.Default.CheckCircle, contentDescription = null) }
+                )
+            }
             OutlinedButton(onClick = onOpenPremium, modifier = Modifier.fillMaxWidth()) {
                 Text("View premium options")
             }
@@ -7121,6 +7181,7 @@ private fun PremiumSettingsSection(
 @Composable
 private fun PremiumScreen(
     state: AppState,
+    onTesterModeChanged: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
     LazyColumn(
@@ -7137,6 +7198,20 @@ private fun PremiumScreen(
                     Text("Workday Planner Premium", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                     Text("The free app covers basic shifts, tasks, reminders, days off, a few imports, and the Today dashboard.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Premium unlocks convenience and power-user tools without hiding existing data.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Tester mode", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Unlock premium for closed testing on this device.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = state.premium.mockPremiumEnabled,
+                            onCheckedChange = onTesterModeChanged
+                        )
+                    }
                 }
             }
         }
