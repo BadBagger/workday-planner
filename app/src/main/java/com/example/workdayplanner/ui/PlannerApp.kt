@@ -19,9 +19,32 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -92,6 +115,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -110,6 +136,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.compose.animation.animateContentSize
 import com.example.workdayplanner.PlannerViewModel
 import com.example.workdayplanner.TrainingImportUiState
 import com.example.workdayplanner.alarm.AlarmScheduler
@@ -205,6 +232,54 @@ private enum class TrainingView(val label: String) {
     All("All")
 }
 
+private enum class VoicePanelState {
+    Hidden,
+    Listening,
+    Ambiguous,
+    Duplicate,
+    Success,
+    Error
+}
+
+@Composable
+private fun rememberMotionEnabled(): Boolean {
+    val context = LocalContext.current
+    return remember {
+        runCatching {
+            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
+        }.getOrDefault(true)
+    }
+}
+
+@Composable
+private fun Modifier.workdayPressScale(enabled: Boolean = true): Modifier {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (enabled && pressed) 0.985f else 1f,
+        animationSpec = tween(110),
+        label = "pressScale"
+    )
+    return this.scale(scale)
+}
+
+@Composable
+private fun WorkdayAnimatedVisibility(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val motionEnabled = rememberMotionEnabled()
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = if (motionEnabled) fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 10 } else fadeIn(tween(80)),
+        exit = if (motionEnabled) fadeOut(tween(140)) + shrinkVertically(tween(160)) else fadeOut(tween(80))
+    ) {
+        content()
+    }
+}
+
 private val workNoteKinds = listOf(
     WorkNoteKind.ShiftNote,
     WorkNoteKind.ManagerHandoff,
@@ -241,6 +316,7 @@ fun PlannerApp(
     var showPremiumScreen by remember { mutableStateOf(false) }
     var openImportAfterIntro by remember { mutableStateOf(false) }
     val showIntro = !state.onboardingCompleted && !state.hasPlannerData()
+    val motionEnabled = rememberMotionEnabled()
 
     LaunchedEffect(requestedTaskId, state.tasks) {
         val taskId = requestedTaskId?.takeIf { id -> state.tasks.any { it.id == id } } ?: return@LaunchedEffect
@@ -340,7 +416,19 @@ fun PlannerApp(
             NavHost(
                 navController = navController,
                 startDestination = Screen.Tasks.route,
-                modifier = Modifier.padding(padding)
+                modifier = Modifier.padding(padding),
+                enterTransition = {
+                    if (motionEnabled) fadeIn(tween(180)) + slideInHorizontally(tween(220)) { it / 12 } else fadeIn(tween(80))
+                },
+                exitTransition = {
+                    if (motionEnabled) fadeOut(tween(140)) + slideOutHorizontally(tween(180)) { -it / 18 } else fadeOut(tween(80))
+                },
+                popEnterTransition = {
+                    if (motionEnabled) fadeIn(tween(180)) + slideInHorizontally(tween(220)) { -it / 12 } else fadeIn(tween(80))
+                },
+                popExitTransition = {
+                    if (motionEnabled) fadeOut(tween(140)) + slideOutHorizontally(tween(180)) { it / 18 } else fadeOut(tween(80))
+                }
             ) {
             composable(Screen.Tasks.route) {
                 TaskListScreen(
@@ -438,7 +526,13 @@ fun PlannerApp(
                     onImagePicked = viewModel::recognizeScheduleImage,
                     onImageCancelled = viewModel::cancelScheduleImport,
                     onPreview = { viewModel.previewImport() },
-                    onApply = { corrected -> viewModel.applyImport(corrected) },
+                    onApply = { corrected ->
+                        viewModel.applyImport(corrected)
+                        navController.navigate(Screen.Tasks.route) {
+                            popUpTo(Screen.Tasks.route) { inclusive = false }
+                            launchSingleTop = true
+                        }
+                    },
                     onStartOver = viewModel::resetScheduleImport,
                     onOpenPremium = { showPremiumScreen = true }
                 )
@@ -707,39 +801,59 @@ private fun VoiceTaskFloatingCapture(
         }
     }
 
+    val voicePanelState = when {
+        listening || processing -> VoicePanelState.Listening
+        ambiguousVoiceTask != null -> VoicePanelState.Ambiguous
+        duplicateCandidate != null -> VoicePanelState.Duplicate
+        createdVoiceTasks.isNotEmpty() -> VoicePanelState.Success
+        voiceError != null -> VoicePanelState.Error
+        else -> VoicePanelState.Hidden
+    }
     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.width(340.dp)) {
-        when {
-            listening || processing -> VoiceTaskListeningCard(
-                transcript = if (processing) "Creating task..." else partialTranscript,
-                error = voiceError,
-                onCancel = ::cancelVoiceCapture,
-                onStop = ::stopVoiceCapture
-            )
-            ambiguousVoiceTask != null -> VoiceTaskAmbiguityCard(
-                result = ambiguousVoiceTask!!,
-                onChoose = { adjusted ->
-                    saveParsedTasks(listOf(adjusted))
-                    ambiguousVoiceTask = null
-                },
-                onCancel = { ambiguousVoiceTask = null }
-            )
-            duplicateCandidate != null -> VoiceTaskDuplicateCard(
-                onKeep = {
-                    val saved = onSaveTask(duplicateCandidate!!)
-                    createdVoiceTasks = listOf(saved)
-                    duplicateCandidate = null
-                },
-                onDismiss = { duplicateCandidate = null }
-            )
-            createdVoiceTasks.isNotEmpty() -> VoiceTaskBatchConfirmationCard(
-                tasks = createdVoiceTasks,
-                onUndo = {
-                    createdVoiceTasks.forEach { onDeleteTask(it.id) }
-                    createdVoiceTasks = emptyList()
-                },
-                onEdit = { createdVoiceTasks.lastOrNull()?.let(onEditTask) }
-            )
-            voiceError != null -> VoiceTaskErrorCard(message = voiceError.orEmpty(), onRetry = ::startVoiceCapture)
+        AnimatedContent(
+            targetState = voicePanelState,
+            transitionSpec = {
+                (fadeIn(tween(160)) + slideInVertically(tween(180)) { it / 8 })
+                    .togetherWith(fadeOut(tween(120)) + slideOutVertically(tween(140)) { -it / 10 })
+            },
+            label = "voicePanel"
+        ) { panel ->
+            when (panel) {
+                VoicePanelState.Hidden -> Spacer(Modifier.height(0.dp))
+                VoicePanelState.Listening -> VoiceTaskListeningCard(
+                    transcript = if (processing) "Creating task..." else partialTranscript,
+                    error = voiceError,
+                    onCancel = ::cancelVoiceCapture,
+                    onStop = ::stopVoiceCapture
+                )
+                VoicePanelState.Ambiguous -> ambiguousVoiceTask?.let {
+                    VoiceTaskAmbiguityCard(
+                        result = it,
+                        onChoose = { adjusted ->
+                            saveParsedTasks(listOf(adjusted))
+                            ambiguousVoiceTask = null
+                        },
+                        onCancel = { ambiguousVoiceTask = null }
+                    )
+                }
+                VoicePanelState.Duplicate -> VoiceTaskDuplicateCard(
+                    onKeep = {
+                        val saved = onSaveTask(duplicateCandidate!!)
+                        createdVoiceTasks = listOf(saved)
+                        duplicateCandidate = null
+                    },
+                    onDismiss = { duplicateCandidate = null }
+                )
+                VoicePanelState.Success -> VoiceTaskBatchConfirmationCard(
+                    tasks = createdVoiceTasks,
+                    onUndo = {
+                        createdVoiceTasks.forEach { onDeleteTask(it.id) }
+                        createdVoiceTasks = emptyList()
+                    },
+                    onEdit = { createdVoiceTasks.lastOrNull()?.let(onEditTask) }
+                )
+                VoicePanelState.Error -> VoiceTaskErrorCard(message = voiceError.orEmpty(), onRetry = ::startVoiceCapture)
+            }
         }
         FloatingActionButton(
             onClick = { if (listening) stopVoiceCapture() else startVoiceCapture() },
@@ -1140,6 +1254,7 @@ private fun TaskListScreen(
             items(events, key = { it.id }) { event ->
                 EventCard(
                     event = event,
+                    modifier = Modifier.animateItem(),
                     onClick = { onEventClick(event) },
                     onDelete = { onDeleteEvent(event.id) }
                 )
@@ -1275,6 +1390,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.taskSection(
         TaskCard(
             task = task,
             scheduleInsight = TaskScheduleClassifier.classify(task, state),
+            modifier = Modifier.animateItem(),
             onClick = { onTaskClick(task) },
             onToggleComplete = { onToggleComplete(task.id) },
             onDelete = { onDelete(task.id) }
@@ -1295,9 +1411,13 @@ private fun TaskViewSelector(
             TaskView.entries.forEach { view ->
                 val label = "${view.label} ${counts[view] ?: 0}"
                 if (view == selected) {
-                    Button(onClick = { onSelected(view) }) { Text(label) }
+                    Button(onClick = { onSelected(view) }, modifier = Modifier.animateContentSize(animationSpec = tween(150))) {
+                        AnimatedContent(targetState = label, label = "taskViewLabel") { value -> Text(value) }
+                    }
                 } else {
-                    OutlinedButton(onClick = { onSelected(view) }) { Text(label) }
+                    OutlinedButton(onClick = { onSelected(view) }, modifier = Modifier.animateContentSize(animationSpec = tween(150))) {
+                        AnimatedContent(targetState = label, label = "taskViewLabel") { value -> Text(value) }
+                    }
                 }
             }
         }
@@ -1442,7 +1562,7 @@ private fun AddTrainingPrompt(onOpen: () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))
     ) {
         Row(
             modifier = Modifier.padding(14.dp).fillMaxWidth(),
@@ -2623,14 +2743,37 @@ private fun VoiceTaskListeningCard(
     onCancel: () -> Unit,
     onStop: () -> Unit
 ) {
+    val motionEnabled = rememberMotionEnabled()
+    val pulse = if (motionEnabled) {
+        val transition = rememberInfiniteTransition(label = "voicePulse")
+        transition.animateFloat(
+            initialValue = 0.94f,
+            targetValue = 1.08f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(900),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "voiceMicPulse"
+        ).value
+    } else {
+        1f
+    }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(200))
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(Icons.Default.Mic, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                Icon(
+                    Icons.Default.Mic,
+                    contentDescription = "Listening",
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = pulse
+                        scaleY = pulse
+                    }
+                )
                 Column(Modifier.weight(1f)) {
                     Text("Listening...", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                     Text(
@@ -4394,12 +4537,13 @@ private fun WorkNoteCard(
 }
 
 @Composable
-private fun EventCard(event: WorkEvent, onClick: () -> Unit, onDelete: () -> Unit) {
+private fun EventCard(event: WorkEvent, modifier: Modifier = Modifier, onClick: () -> Unit, onDelete: () -> Unit) {
     val context = LocalContext.current
     Card(
         onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = modifier.animateContentSize(animationSpec = tween(220))
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -4445,29 +4589,55 @@ private fun EventCard(event: WorkEvent, onClick: () -> Unit, onDelete: () -> Uni
 private fun TaskCard(
     task: TaskItem,
     scheduleInsight: TaskScheduleInsight,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onToggleComplete: () -> Unit,
     onDelete: () -> Unit
 ) {
     val priorityColor = task.priority.priorityColor()
+    val cardAlpha by animateFloatAsState(
+        targetValue = if (task.completed) 0.68f else 1f,
+        animationSpec = tween(180),
+        label = "taskCompletedAlpha"
+    )
+    val containerColor by animateColorAsState(
+        targetValue = if (task.completed) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f) else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(180),
+        label = "taskContainer"
+    )
+    val priorityWidth by animateDpAsState(
+        targetValue = if (task.completed) 3.dp else 5.dp,
+        animationSpec = tween(180),
+        label = "priorityRail"
+    )
     Card(
         onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
         border = BorderStroke(
             1.dp,
             if (task.priority == TaskPriority.Normal) MaterialTheme.colorScheme.surfaceVariant else priorityColor.copy(alpha = 0.65f)
-        )
+        ),
+        modifier = modifier
+            .alpha(cardAlpha)
+            .animateContentSize(animationSpec = tween(220))
     ) {
         Row(Modifier.height(IntrinsicSize.Min)) {
             Box(
                 Modifier
-                    .width(5.dp)
+                    .width(priorityWidth)
                     .fillMaxHeight()
                     .background(priorityColor)
             )
             Column(Modifier.padding(14.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = task.completed, onCheckedChange = { onToggleComplete() })
+                    Box(
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = if (task.completed) 1.06f else 1f
+                            scaleY = if (task.completed) 1.06f else 1f
+                        }
+                    ) {
+                        Checkbox(checked = task.completed, onCheckedChange = { onToggleComplete() })
+                    }
                     Text(
                         text = task.title,
                         style = MaterialTheme.typography.titleMedium,
@@ -4758,7 +4928,7 @@ private fun TaskDetailScreen(
             Spacer(Modifier.width(8.dp))
             Text("Speak task")
         }
-        if (voiceListening) {
+        WorkdayAnimatedVisibility(visible = voiceListening) {
             VoiceTaskListeningCard(
                 transcript = voiceTranscript,
                 error = voiceError,
@@ -4773,7 +4943,8 @@ private fun TaskDetailScreen(
                     voiceListening = false
                 }
             )
-        } else if (voiceError != null) {
+        }
+        WorkdayAnimatedVisibility(visible = !voiceListening && voiceError != null) {
             VoiceTaskErrorCard(message = voiceError.orEmpty(), onRetry = ::startVoiceTaskFromEditor)
         }
         ambiguousEditorVoiceTask?.let { result ->
@@ -4786,7 +4957,7 @@ private fun TaskDetailScreen(
                 onCancel = { ambiguousEditorVoiceTask = null }
             )
         }
-        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Task", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -4805,7 +4976,8 @@ private fun TaskDetailScreen(
                         Text(if (showTaskDetails) "Hide details" else "Details")
                     }
                 }
-                if (showTaskDetails) {
+                WorkdayAnimatedVisibility(visible = showTaskDetails) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     TaskCategorySelector(selected = category, onSelected = { category = it })
                     TaskPrioritySelector(selected = priority, onSelected = { priority = it })
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -4815,10 +4987,11 @@ private fun TaskDetailScreen(
                         }
                         Switch(checked = workRelated, onCheckedChange = { workRelated = it })
                     }
+                    }
                 }
             }
         }
-        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f)) {
@@ -4829,7 +5002,7 @@ private fun TaskDetailScreen(
                         Text(if (showTemplates) "Hide" else "Use")
                     }
                 }
-                if (showTemplates) {
+                WorkdayAnimatedVisibility(visible = showTemplates) {
                     TaskTemplateChips(
                         templates = taskTemplatesFor(state),
                         onApply = { template ->
@@ -4860,7 +5033,7 @@ private fun TaskDetailScreen(
                 }
             }
         }
-        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("When", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 TaskTimingRuleChips(selected = timingRule, onSelected = { selected ->
@@ -4923,7 +5096,8 @@ private fun TaskDetailScreen(
                     }
                     Switch(checked = reminderEnabled, onCheckedChange = { reminderEnabled = it })
                 }
-                if (reminderEnabled) {
+                WorkdayAnimatedVisibility(visible = reminderEnabled) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (timingRule in setOf(TaskTimingRule.AtTime, TaskTimingRule.WorkdaysOnly, TaskTimingRule.MorningOfWorkday, TaskTimingRule.DaysOffOnly)) {
                         DateTimeRow("Reminder time", alarmAt, onChanged = { alarmAt = it })
                     }
@@ -4934,10 +5108,11 @@ private fun TaskDetailScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    }
                 }
             }
         }
-        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+        Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("More rules", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -4946,7 +5121,8 @@ private fun TaskDetailScreen(
                 if (!showMoreRules) {
                     Text("Repeat, shift type, day-off, and carry-over rules.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (showMoreRules) {
+                WorkdayAnimatedVisibility(visible = showMoreRules) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (!advancedRulesUnlocked) {
                         PremiumLockedInline(PremiumFeature.AdvancedTaskRules, "Basic deadlines and reminders stay free. Premium unlocks shift-aware repeat and carry-over rules.", onOpenPremium)
                         return@Column
@@ -4963,14 +5139,15 @@ private fun TaskDetailScreen(
                         else -> linkedShiftType
                     }
                 })
-                if (showAdvancedRepeat || repeatRule == RepeatRule.CustomDays) {
+                WorkdayAnimatedVisibility(visible = showAdvancedRepeat || repeatRule == RepeatRule.CustomDays) {
                     CustomRepeatDays(
                         selectedDays = repeatDays,
                         onToggle = { day ->
                             repeatDays = if (day in repeatDays) repeatDays - day else repeatDays + day
                         }
                     )
-                } else {
+                }
+                if (!showAdvancedRepeat && repeatRule != RepeatRule.CustomDays) {
                     TextButton(onClick = {
                         showAdvancedRepeat = true
                         repeatRule = RepeatRule.CustomDays
@@ -4982,6 +5159,7 @@ private fun TaskDetailScreen(
                 }
                 LinkedShiftTypeChips(selected = linkedShiftType, onSelected = { linkedShiftType = it })
                 CarryOverChips(selected = carryOverBehavior, onSelected = { carryOverBehavior = it })
+                    }
                 }
             }
         }
@@ -7354,7 +7532,7 @@ private fun ScheduleDayCard(
     Card(
         colors = CardDefaults.cardColors(containerColor = container),
         border = BorderStroke(1.dp, if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -7371,10 +7549,14 @@ private fun ScheduleDayCard(
                 }
             }
             when {
-                isDayOff -> DayOffCard()
-                shifts.isEmpty() -> Text("No shift saved", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                isDayOff -> WorkdayAnimatedVisibility(visible = true) { DayOffCard() }
+                shifts.isEmpty() -> WorkdayAnimatedVisibility(visible = true) {
+                    Text("No shift saved", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 else -> shifts.forEach { shift ->
-                    ShiftSummaryCard(shift = shift, linkedTaskCount = linkedTaskCount(shift), onDelete = { onDeleteShift(shift.id) })
+                    WorkdayAnimatedVisibility(visible = true) {
+                        ShiftSummaryCard(shift = shift, linkedTaskCount = linkedTaskCount(shift), onDelete = { onDeleteShift(shift.id) })
+                    }
                 }
             }
         }
@@ -7396,7 +7578,7 @@ private fun ShiftSummaryCard(shift: WorkShift, linkedTaskCount: Int, onDelete: (
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -7494,6 +7676,11 @@ private fun ImportScreen(
         }
         ImportStepHeader("2", "Run on-device OCR", "Workday Planner reads the screenshot locally and does not upload images.")
         ImportStepHeader("3", "Review recognized text", "You can edit the OCR text before building the preview.")
+        ImportProgressCard(
+            isReading = isReading,
+            hasPreview = parsed != null,
+            completeMessage = message
+        )
         Button(
             onClick = onPreview,
             enabled = rawText.isNotBlank() && !isReading,
@@ -7522,11 +7709,21 @@ private fun ImportScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
-            Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)) {
+            Card(
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.animateContentSize(animationSpec = tween(220))
+            ) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ImportStepHeader("4", "Review detected shifts", "High confidence rows are pre-selected. Needs review rows must be confirmed before saving.")
                     val corrected = reviewRows.toParsedSchedule()
                     Text("${corrected.shifts.size} shifts, ${corrected.daysOff.size} days off confirmed")
+                    Button(
+                        onClick = { onApply(corrected) },
+                        enabled = corrected.shifts.isNotEmpty() || corrected.daysOff.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Accept and proceed")
+                    }
                     changes?.let { changeSet -> ScheduleChangeSummary(changeSet, "Original OCR changes") }
                     ScheduleReviewRows(
                         rows = reviewRows,
@@ -7570,7 +7767,7 @@ private fun ImportScreen(
                         enabled = corrected.shifts.isNotEmpty() || corrected.daysOff.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Accept and save confirmed shifts")
+                        Text("Accept")
                     }
                     TextButton(onClick = onStartOver, modifier = Modifier.fillMaxWidth()) {
                         Text("Start over")
@@ -7752,10 +7949,75 @@ private fun ScheduleReviewRows(
         rows.groupBy { if (it.kind == ScheduleReviewKind.Ignored) null else it.date }.toSortedMap(compareBy<LocalDate?> { it ?: LocalDate.MAX }).forEach { (date, dateRows) ->
             Text(date?.format(dateFormatter) ?: "Unclear OCR lines", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
             dateRows.forEach { row ->
-                ScheduleReviewRowCard(
-                    row = row,
-                    onChange = { changed -> onRowsChanged(rows.map { if (it.id == row.id) changed else it }) },
-                    onDelete = { onRowsChanged(rows.filterNot { it.id == row.id }) }
+                WorkdayAnimatedVisibility(visible = true) {
+                    ScheduleReviewRowCard(
+                        row = row,
+                        onChange = { changed -> onRowsChanged(rows.map { if (it.id == row.id) changed else it }) },
+                        onDelete = { onRowsChanged(rows.filterNot { it.id == row.id }) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImportProgressCard(
+    isReading: Boolean,
+    hasPreview: Boolean,
+    completeMessage: String?
+) {
+    val stage = when {
+        isReading -> "Reading image"
+        completeMessage != null -> "Import complete"
+        hasPreview -> "Reviewing results"
+        else -> null
+    } ?: return
+    val motionEnabled = rememberMotionEnabled()
+    val pulse = if (motionEnabled && isReading) {
+        val transition = rememberInfiniteTransition(label = "importPulse")
+        transition.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+            label = "importAlpha"
+        ).value
+    } else {
+        1f
+    }
+    WorkdayAnimatedVisibility(visible = true) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stage, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    listOf("Reading image", "Detecting shifts", "Reviewing results", "Import complete").forEach { label ->
+                        val active = label == stage || (hasPreview && label == "Detecting shifts")
+                        val color by animateColorAsState(
+                            targetValue = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                            animationSpec = tween(160),
+                            label = "importStageColor"
+                        )
+                        Box(
+                            modifier = Modifier
+                                .height(4.dp)
+                                .weight(1f)
+                                .alpha(if (active && isReading) pulse else 1f)
+                                .background(color)
+                        )
+                    }
+                }
+                Text(
+                    when {
+                        isReading -> "Reading the screenshot on this device."
+                        completeMessage != null -> completeMessage
+                        else -> "Detected entries are ready to review before saving."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -8029,8 +8291,19 @@ private fun ParsedScheduleRows(parsed: ParsedSchedule) {
 
 @Composable
 private fun EmptyState(title: String, body: String) {
+    val motionEnabled = rememberMotionEnabled()
+    var appeared by remember { mutableStateOf(!motionEnabled) }
+    LaunchedEffect(Unit) { appeared = true }
+    val alpha by animateFloatAsState(
+        targetValue = if (appeared) 1f else 0f,
+        animationSpec = tween(if (motionEnabled) 220 else 0),
+        label = "emptyStateAlpha"
+    )
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp)
+            .alpha(alpha),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {

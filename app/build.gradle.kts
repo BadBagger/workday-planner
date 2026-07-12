@@ -20,8 +20,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 63
-        versionName = "2.43-tester-mode"
+        versionCode = 64
+        versionName = "2.44-motion-polish"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
