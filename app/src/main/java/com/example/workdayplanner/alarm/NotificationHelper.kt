@@ -15,7 +15,7 @@ object NotificationHelper {
         val manager = context.getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Task deadlines",
+            "Task alarms",
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
             description = "Full-screen alarms for work task deadlines and reminders."

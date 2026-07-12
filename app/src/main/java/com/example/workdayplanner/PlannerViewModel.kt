@@ -10,6 +10,10 @@ import com.example.workdayplanner.alarm.ShiftAlarmScheduler
 import com.example.workdayplanner.calendar.CalendarSyncManager
 import com.example.workdayplanner.calendar.DeviceCalendar
 import com.example.workdayplanner.data.AccentStyle
+import com.example.workdayplanner.data.AlarmDispatchStatus
+import com.example.workdayplanner.data.AlarmSettings
+import com.example.workdayplanner.data.AlarmDelivery
+import com.example.workdayplanner.data.AlarmSchedulingStatus
 import com.example.workdayplanner.data.AppearanceMode
 import com.example.workdayplanner.data.AppState
 import com.example.workdayplanner.data.ParsedSchedule
@@ -18,6 +22,7 @@ import com.example.workdayplanner.data.PremiumAccess
 import com.example.workdayplanner.data.PlannerRepository
 import com.example.workdayplanner.data.CarryOverBehavior
 import com.example.workdayplanner.data.RepeatRule
+import com.example.workdayplanner.data.ReminderType
 import com.example.workdayplanner.data.ScheduleTextParser
 import com.example.workdayplanner.data.ScheduleChangeDetector
 import com.example.workdayplanner.data.ScheduleChangeSet
@@ -84,24 +89,58 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         rescheduleShiftAlarms()
     }
 
-    fun saveTask(task: TaskItem) {
+    fun saveTask(task: TaskItem): TaskItem {
+        val existing = state.value.tasks.firstOrNull { it.id == task.id }
         val resolved = ScheduleAwareTaskPlanner.resolve(task, state.value)
-        repository.upsertTask(resolved)
-        alarmScheduler.cancel(resolved.id)
-        alarmScheduler.schedule(resolved)
+        val withAlarmStatus = resolved.copy(
+            alarmSchedulingStatus = when {
+                resolved.reminderType == ReminderType.None -> AlarmSchedulingStatus.NoAlarmRequested
+                resolved.alarmAt != null || resolved.deadline != null -> AlarmSchedulingStatus.Scheduled
+                else -> AlarmSchedulingStatus.NotScheduled
+            },
+            alarmLabel = resolved.alarmLabel.ifBlank { "Workday Planner - ${resolved.title}" }
+        )
+        val sameClockAlarmAlreadySent = existing?.let { old ->
+            old.alarmDelivery == AlarmDelivery.SystemClockAlarm &&
+                withAlarmStatus.alarmDelivery == AlarmDelivery.SystemClockAlarm &&
+                old.alarmAt == withAlarmStatus.alarmAt &&
+                old.alarmLabel.ifBlank { "Workday Planner - ${old.title}" } == withAlarmStatus.alarmLabel &&
+                old.alarmDispatchStatus == AlarmDispatchStatus.SentToSystemClock
+        } == true
+        if (existing != null && !sameClockAlarmAlreadySent) {
+            alarmScheduler.cancel(existing)
+        }
+        repository.upsertTask(withAlarmStatus)
+        val dispatchStatus = if (sameClockAlarmAlreadySent) {
+            AlarmDispatchStatus.SentToSystemClock
+        } else if (withAlarmStatus.reminderType != ReminderType.None) {
+            alarmScheduler.schedule(withAlarmStatus)
+        } else {
+            AlarmDispatchStatus.NoAlarmRequested
+        }
+        val finalTask = withAlarmStatus.copy(
+            alarmDispatchStatus = dispatchStatus,
+            systemClockAlarmDispatchedAt = if (dispatchStatus == AlarmDispatchStatus.SentToSystemClock) {
+                    java.time.LocalDateTime.now()
+                } else {
+                    withAlarmStatus.systemClockAlarmDispatchedAt
+                }
+        )
+        repository.upsertTask(finalTask)
+        return finalTask
     }
 
     fun addChecklistTemplate(templateId: String) {
-        WorkChecklistTemplates.tasksFor(templateId).forEach(::saveTask)
+        WorkChecklistTemplates.tasksFor(templateId).forEach { saveTask(it) }
     }
 
     fun deleteTask(taskId: String) {
+        state.value.tasks.firstOrNull { it.id == taskId }?.let { alarmScheduler.cancel(it) }
         repository.deleteTask(taskId)
-        alarmScheduler.cancel(taskId)
     }
 
     fun clearCompletedTasks() {
-        state.value.tasks.filter { it.completed }.forEach { alarmScheduler.cancel(it.id) }
+        state.value.tasks.filter { it.completed }.forEach { alarmScheduler.cancel(it) }
         repository.clearCompletedTasks()
     }
 
@@ -298,7 +337,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
             .take(10)
             .map { it.toTrainingTask() }
             .filterNot { it.title.lowercase() in existingTitles }
-            .forEach(::saveTask)
+            .forEach { saveTask(it) }
     }
 
     fun saveEvent(event: WorkEvent) {
@@ -313,10 +352,12 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         val task = state.value.tasks.firstOrNull { it.id == taskId } ?: return
         repository.toggleComplete(taskId)
         if (!task.completed) {
-            alarmScheduler.cancel(taskId)
+            alarmScheduler.cancel(task)
             TaskRecurrence.nextOccurrence(task.copy(completed = true, completionHistory = task.completionHistory + LocalDateTime.now()), state.value)?.let(::saveTaskIfMissing)
         } else {
-            alarmScheduler.schedule(task.copy(completed = false))
+            val restored = task.copy(completed = false)
+            val dispatchStatus = alarmScheduler.schedule(restored)
+            repository.upsertTask(restored.copy(alarmDispatchStatus = dispatchStatus))
         }
     }
 
@@ -400,10 +441,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     private fun rescheduleTasksForShift(shiftId: String) {
         val linked = state.value.tasks.filter { it.linkedShiftId == shiftId }
         linked.forEach { task ->
-            val resolved = ScheduleAwareTaskPlanner.resolve(task, state.value)
-            repository.upsertTask(resolved)
-            alarmScheduler.cancel(resolved.id)
-            alarmScheduler.schedule(resolved)
+            saveTask(ScheduleAwareTaskPlanner.resolve(task, state.value))
         }
     }
 
@@ -412,10 +450,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         current.tasks
             .filter { it.isScheduleAware() }
             .forEach { task ->
-                val resolved = ScheduleAwareTaskPlanner.resolve(task, current)
-                repository.upsertTask(resolved)
-                alarmScheduler.cancel(resolved.id)
-                alarmScheduler.schedule(resolved)
+                saveTask(ScheduleAwareTaskPlanner.resolve(task, current))
             }
     }
 
@@ -451,6 +486,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     fun setShiftAlarmSettings(settings: ShiftAlarmSettings) {
         repository.setShiftAlarmSettings(settings)
         rescheduleShiftAlarms()
+    }
+
+    fun setAlarmSettings(settings: AlarmSettings) {
+        repository.setAlarmSettings(settings)
     }
 
     fun setMockPremium(enabled: Boolean) {

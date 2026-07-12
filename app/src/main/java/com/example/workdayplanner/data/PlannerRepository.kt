@@ -199,6 +199,10 @@ class PlannerRepository(context: Context) {
         state.copy(shiftAlarmSettings = settings)
     }
 
+    fun setAlarmSettings(settings: AlarmSettings) = update { state ->
+        state.copy(alarmSettings = settings)
+    }
+
     fun setMockPremium(enabled: Boolean) = update { state ->
         state.copy(premium = state.premium.copy(mockPremiumEnabled = enabled, isPremium = false))
     }
@@ -278,6 +282,7 @@ class PlannerRepository(context: Context) {
             },
             paySettings = root.optJSONObject("paySettings")?.let(::paySettingsFromJson) ?: PaySettings(),
             shiftAlarmSettings = root.optJSONObject("shiftAlarmSettings")?.let(::shiftAlarmSettingsFromJson) ?: ShiftAlarmSettings(),
+            alarmSettings = root.optJSONObject("alarmSettings")?.let(::alarmSettingsFromJson) ?: AlarmSettings(),
             timecards = root.optJSONArray("timecards").toObjects(::timecardFromJson),
             trainingItems = root.optJSONArray("trainingItems").toObjects(::trainingItemFromJson),
             shiftTemplates = root.optJSONArray("shiftTemplates").toObjects(::shiftTemplateFromJson),
@@ -307,6 +312,7 @@ class PlannerRepository(context: Context) {
             .put("selectedCalendarId", state.selectedCalendarId)
             .put("paySettings", paySettingsToJson(state.paySettings))
             .put("shiftAlarmSettings", shiftAlarmSettingsToJson(state.shiftAlarmSettings))
+            .put("alarmSettings", alarmSettingsToJson(state.alarmSettings))
             .put("timecards", JSONArray(state.timecards.map(::timecardToJson)))
             .put("trainingItems", JSONArray(state.trainingItems.map(::trainingItemToJson)))
             .put("shiftTemplates", JSONArray(state.shiftTemplates.map(::shiftTemplateToJson)))
@@ -334,6 +340,17 @@ class PlannerRepository(context: Context) {
         .put("timingRule", task.timingRule.name)
         .put("carryOverBehavior", task.carryOverBehavior.name)
         .put("alarmOffsetMinutes", task.alarmOffsetMinutes)
+        .put("rawVoiceTranscript", task.rawVoiceTranscript)
+        .put("reminderType", task.reminderType.name)
+        .put("alarmSchedulingStatus", task.alarmSchedulingStatus.name)
+        .put("alarmDelivery", task.alarmDelivery.name)
+        .put("alarmDispatchStatus", task.alarmDispatchStatus.name)
+        .put("alarmLabel", task.alarmLabel)
+        .put("systemClockAlarmDispatchedAt", task.systemClockAlarmDispatchedAt?.toString())
+        .put("parserConfidence", task.parserConfidence)
+        .put("createdUsingVoice", task.createdUsingVoice)
+        .put("timeZoneId", task.timeZoneId)
+        .put("createdAt", task.createdAt.toString())
         .put("completed", task.completed)
         .put("completionHistory", JSONArray(task.completionHistory.map(LocalDateTime::toString)))
 
@@ -360,6 +377,29 @@ class PlannerRepository(context: Context) {
         timingRule = TaskTimingRule.fromStored(json.optString("timingRule", TaskTimingRule.AtTime.name)),
         carryOverBehavior = CarryOverBehavior.fromStored(json.optString("carryOverBehavior", CarryOverBehavior.KeepOverdue.name)),
         alarmOffsetMinutes = json.optLong("alarmOffsetMinutes", 30).coerceAtLeast(0),
+        rawVoiceTranscript = json.optString("rawVoiceTranscript"),
+        reminderType = runCatching {
+            ReminderType.valueOf(json.optString("reminderType", ReminderType.FullAlarm.name))
+        }.getOrDefault(ReminderType.FullAlarm),
+        alarmSchedulingStatus = runCatching {
+            AlarmSchedulingStatus.valueOf(json.optString("alarmSchedulingStatus", AlarmSchedulingStatus.NotScheduled.name))
+        }.getOrDefault(AlarmSchedulingStatus.NotScheduled),
+        alarmDelivery = runCatching {
+            AlarmDelivery.valueOf(json.optString("alarmDelivery", AlarmDelivery.WorkdayPlannerAlarm.name))
+        }.getOrDefault(AlarmDelivery.WorkdayPlannerAlarm),
+        alarmDispatchStatus = runCatching {
+            AlarmDispatchStatus.valueOf(json.optString("alarmDispatchStatus", AlarmDispatchStatus.NotAttempted.name))
+        }.getOrDefault(AlarmDispatchStatus.NotAttempted),
+        alarmLabel = json.optString("alarmLabel"),
+        systemClockAlarmDispatchedAt = json.optString("systemClockAlarmDispatchedAt").takeIf { it.isNotBlank() && it != "null" }?.let {
+            runCatching { LocalDateTime.parse(it) }.getOrNull()
+        },
+        parserConfidence = json.optDouble("parserConfidence", 1.0),
+        createdUsingVoice = json.optBoolean("createdUsingVoice", false),
+        timeZoneId = json.optString("timeZoneId", java.time.ZoneId.systemDefault().id),
+        createdAt = json.optString("createdAt").takeIf { it.isNotBlank() && it != "null" }?.let {
+            runCatching { LocalDateTime.parse(it) }.getOrNull()
+        } ?: LocalDateTime.now(),
         completed = json.optBoolean("completed"),
         completionHistory = json.optJSONArray("completionHistory").toStrings().mapNotNull { value ->
             runCatching { LocalDateTime.parse(value) }.getOrNull()
@@ -484,6 +524,23 @@ class PlannerRepository(context: Context) {
         offsetMinutes = json.optInt("offsetMinutes", 80).coerceIn(0, 24 * 60),
         onlyEarlyShifts = json.optBoolean("onlyEarlyShifts", false),
         earlyShiftCutoffHour = json.optInt("earlyShiftCutoffHour", 9).coerceIn(0, 23)
+    )
+
+    private fun alarmSettingsToJson(settings: AlarmSettings) = JSONObject()
+        .put("defaultReminderOffsetMinutes", settings.defaultReminderOffsetMinutes)
+        .put("defaultAlarmDelivery", settings.defaultAlarmDelivery.name)
+        .put("defaultSnoozeMinutes", settings.defaultSnoozeMinutes)
+        .put("vibration", settings.vibration)
+        .put("spokenConfirmation", settings.spokenConfirmation)
+
+    private fun alarmSettingsFromJson(json: JSONObject) = AlarmSettings(
+        defaultReminderOffsetMinutes = json.optInt("defaultReminderOffsetMinutes", 30).coerceIn(0, 24 * 60),
+        defaultAlarmDelivery = runCatching {
+            AlarmDelivery.valueOf(json.optString("defaultAlarmDelivery", AlarmDelivery.SystemClockAlarm.name))
+        }.getOrDefault(AlarmDelivery.SystemClockAlarm),
+        defaultSnoozeMinutes = json.optInt("defaultSnoozeMinutes", 10).coerceIn(1, 120),
+        vibration = json.optBoolean("vibration", true),
+        spokenConfirmation = json.optBoolean("spokenConfirmation", false)
     )
 
     private fun timecardToJson(entry: TimecardEntry) = JSONObject()

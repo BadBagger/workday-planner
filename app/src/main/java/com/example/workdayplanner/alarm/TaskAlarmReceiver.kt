@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.example.workdayplanner.MainActivity
 import com.example.workdayplanner.R
+import com.example.workdayplanner.data.AlarmDelivery
 import com.example.workdayplanner.data.PlannerRepository
 import com.example.workdayplanner.data.RepeatRule
 import com.example.workdayplanner.data.TaskRecurrence
@@ -39,35 +40,36 @@ class TaskAlarmReceiver : BroadcastReceiver() {
             contentIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val fullScreenIntent = Intent(context, TaskAlarmActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra(TaskAlarmActivity.EXTRA_ALARM_ID, taskId)
-            .putExtra(TaskAlarmActivity.EXTRA_ALARM_TITLE, title)
-            .putExtra(TaskAlarmActivity.EXTRA_ALARM_HEADING, "Task alarm")
-            .putExtra(TaskAlarmActivity.EXTRA_ALARM_MESSAGE, "This reminder is ringing because you set an alarm for this task.")
-            .putExtra(TaskAlarmActivity.EXTRA_OPEN_BUTTON_LABEL, "Open task")
-            .putExtra(TaskAlarmActivity.EXTRA_SNOOZE_RECEIVER, TaskAlarmActivity.SNOOZE_TASK)
-        val pendingFullScreenIntent = PendingIntent.getActivity(
-            context,
-            taskId.hashCode() xor FULL_SCREEN_REQUEST_MASK,
-            fullScreenIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val notification = NotificationCompat.Builder(context, NotificationHelper.CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, NotificationHelper.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
-            .setContentText("Full alarm: this task needs your attention.")
+            .setContentText(if (task.alarmDelivery == AlarmDelivery.StandardNotification) "Task reminder." else "Full alarm: this task needs your attention.")
             .setContentIntent(pendingContentIntent)
-            .setFullScreenIntent(pendingFullScreenIntent, true)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setSound(Settings.System.DEFAULT_ALARM_ALERT_URI)
             .setVibrate(longArrayOf(0, 700, 350, 700, 350, 1200))
             .setAutoCancel(true)
-            .build()
+        if (task.alarmDelivery != AlarmDelivery.StandardNotification) {
+            val fullScreenIntent = Intent(context, TaskAlarmActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .putExtra(TaskAlarmActivity.EXTRA_ALARM_ID, taskId)
+                .putExtra(TaskAlarmActivity.EXTRA_ALARM_TITLE, title)
+                .putExtra(TaskAlarmActivity.EXTRA_ALARM_HEADING, "Task alarm")
+                .putExtra(TaskAlarmActivity.EXTRA_ALARM_MESSAGE, "This reminder is ringing because you set an alarm for this task.")
+                .putExtra(TaskAlarmActivity.EXTRA_OPEN_BUTTON_LABEL, "Open task")
+                .putExtra(TaskAlarmActivity.EXTRA_SNOOZE_RECEIVER, TaskAlarmActivity.SNOOZE_TASK)
+            val pendingFullScreenIntent = PendingIntent.getActivity(
+                context,
+                taskId.hashCode() xor FULL_SCREEN_REQUEST_MASK,
+                fullScreenIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.setFullScreenIntent(pendingFullScreenIntent, true)
+        }
 
-        NotificationManagerCompat.from(context).notify(taskId.hashCode(), notification)
+        NotificationManagerCompat.from(context).notify(taskId.hashCode(), builder.build())
 
         if (task.repeatRule != RepeatRule.None) {
             TaskRecurrence.nextOccurrence(task, repository.state.value)?.let { next ->

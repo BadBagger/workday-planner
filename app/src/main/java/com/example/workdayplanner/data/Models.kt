@@ -121,6 +121,42 @@ enum class TaskPriority(val label: String, val sortWeight: Int) {
     Critical("Critical", 3)
 }
 
+enum class ReminderType {
+    None,
+    FullAlarm
+}
+
+enum class AlarmSchedulingStatus {
+    NotScheduled,
+    Scheduled,
+    NoAlarmRequested
+}
+
+enum class AlarmDelivery(val label: String) {
+    SystemClockAlarm("System Clock Alarm"),
+    WorkdayPlannerAlarm("Workday Planner Alarm"),
+    StandardNotification("Standard Notification")
+}
+
+enum class AlarmDispatchStatus {
+    NotAttempted,
+    SentToSystemClock,
+    ScheduledInApp,
+    ScheduledNotification,
+    SystemClockFallbackScheduled,
+    NoAlarmRequested,
+    NoClockAppAvailable,
+    ExactAlarmAccessNeeded,
+    SkippedPastAlarm
+}
+
+enum class AlarmCancelStatus {
+    NotNeeded,
+    AppAlarmCancelled,
+    SystemClockDismissSent,
+    SystemClockDismissUnavailable
+}
+
 enum class WidgetLayoutMode(val label: String) {
     Compact("Compact"),
     Standard("Standard"),
@@ -173,6 +209,17 @@ data class TaskItem(
     val timingRule: TaskTimingRule = TaskTimingRule.AtTime,
     val carryOverBehavior: CarryOverBehavior = CarryOverBehavior.KeepOverdue,
     val alarmOffsetMinutes: Long = 30,
+    val rawVoiceTranscript: String = "",
+    val reminderType: ReminderType = ReminderType.FullAlarm,
+    val alarmSchedulingStatus: AlarmSchedulingStatus = AlarmSchedulingStatus.NotScheduled,
+    val alarmDelivery: AlarmDelivery = AlarmDelivery.WorkdayPlannerAlarm,
+    val alarmDispatchStatus: AlarmDispatchStatus = AlarmDispatchStatus.NotAttempted,
+    val alarmLabel: String = "",
+    val systemClockAlarmDispatchedAt: LocalDateTime? = null,
+    val parserConfidence: Double = 1.0,
+    val createdUsingVoice: Boolean = false,
+    val timeZoneId: String = java.time.ZoneId.systemDefault().id,
+    val createdAt: LocalDateTime = LocalDateTime.now(),
     val completed: Boolean = false,
     val completionHistory: List<LocalDateTime> = emptyList()
 )
@@ -330,6 +377,14 @@ data class ShiftAlarmSettings(
     val earlyShiftCutoffHour: Int = 9
 )
 
+data class AlarmSettings(
+    val defaultReminderOffsetMinutes: Int = 30,
+    val defaultAlarmDelivery: AlarmDelivery = AlarmDelivery.SystemClockAlarm,
+    val defaultSnoozeMinutes: Int = 10,
+    val vibration: Boolean = true,
+    val spokenConfirmation: Boolean = false
+)
+
 enum class PayPeriodType(val label: String) {
     Weekly("Weekly"),
     Biweekly("Biweekly"),
@@ -387,6 +442,7 @@ data class AppState(
     val selectedCalendarId: Long? = null,
     val paySettings: PaySettings = PaySettings(),
     val shiftAlarmSettings: ShiftAlarmSettings = ShiftAlarmSettings(),
+    val alarmSettings: AlarmSettings = AlarmSettings(),
     val timecards: List<TimecardEntry> = emptyList(),
     val trainingItems: List<TrainingItem> = emptyList(),
     val shiftTemplates: List<ShiftTemplate> = emptyList(),

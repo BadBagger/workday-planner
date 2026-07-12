@@ -135,10 +135,20 @@ private fun buildViews(context: Context): RemoteViews {
         launchIntent,
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
+    val voiceIntent = Intent(context, MainActivity::class.java).apply {
+        action = MainActivity.ACTION_VOICE_TASK
+    }
+    val voicePendingIntent = PendingIntent.getActivity(
+        context,
+        11,
+        voiceIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
     views.setOnClickPendingIntent(R.id.widget_header, launchPendingIntent)
     views.setOnClickPendingIntent(R.id.widget_logo, launchPendingIntent)
     views.setOnClickPendingIntent(R.id.widget_title, launchPendingIntent)
     views.setOnClickPendingIntent(R.id.widget_shift, launchPendingIntent)
+    views.setOnClickPendingIntent(R.id.widget_voice_task, voicePendingIntent)
     views.setInt(R.id.widget_root, "setBackgroundColor", palette.background)
     views.setTextColor(R.id.widget_title, palette.title)
     views.setTextColor(R.id.widget_shift, palette.accent)

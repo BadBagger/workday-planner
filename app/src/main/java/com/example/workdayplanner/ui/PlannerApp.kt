@@ -1,6 +1,7 @@
 package com.example.workdayplanner.ui
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Intent
@@ -12,6 +13,8 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.provider.AlarmClock
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
@@ -66,6 +69,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -92,7 +96,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
@@ -106,14 +112,19 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.workdayplanner.PlannerViewModel
 import com.example.workdayplanner.TrainingImportUiState
+import com.example.workdayplanner.alarm.AlarmScheduler
 import com.example.workdayplanner.calendar.DeviceCalendar
 import com.example.workdayplanner.data.AccentStyle
+import com.example.workdayplanner.data.AlarmDelivery
+import com.example.workdayplanner.data.AlarmDispatchStatus
+import com.example.workdayplanner.data.AlarmSettings
 import com.example.workdayplanner.data.AppearanceMode
 import com.example.workdayplanner.data.AppThemeStyle
 import com.example.workdayplanner.data.AppState
 import com.example.workdayplanner.data.CarryOverBehavior
 import com.example.workdayplanner.data.LinkedShiftType
 import com.example.workdayplanner.data.RepeatRule
+import com.example.workdayplanner.data.ReminderType
 import com.example.workdayplanner.data.TaskItem
 import com.example.workdayplanner.data.TaskCategory
 import com.example.workdayplanner.data.TaskPriority
@@ -155,6 +166,8 @@ import com.example.workdayplanner.data.WorkNoteOrganizer
 import com.example.workdayplanner.data.WorkNoteTemplates
 import com.example.workdayplanner.data.WorkVoiceCaptureParser
 import com.example.workdayplanner.data.WorkVoiceCaptureType
+import com.example.workdayplanner.data.VoiceTaskParser
+import com.example.workdayplanner.data.VoiceTaskParseResult
 import com.example.workdayplanner.data.ShiftTemplate
 import com.example.workdayplanner.data.ShiftTemplateKind
 import java.io.File
@@ -165,6 +178,7 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.temporal.TemporalAdjusters
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.delay
 
 private val dateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE, MMM d")
 private val dateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, h:mm a")
@@ -211,6 +225,7 @@ private fun noteSort(): Comparator<WorkNote> =
 fun PlannerApp(
     viewModel: PlannerViewModel,
     requestedTaskId: String? = null,
+    voiceTaskLaunchRequest: Int = 0,
     onTaskRequestHandled: () -> Unit = {},
     onNotificationPermissionNeeded: () -> Unit = {}
 ) {
@@ -239,6 +254,15 @@ fun PlannerApp(
         if (!showIntro && openImportAfterIntro) {
             openImportAfterIntro = false
             navController.navigate(Screen.Import.route) {
+                launchSingleTop = true
+            }
+        }
+    }
+
+    LaunchedEffect(voiceTaskLaunchRequest) {
+        if (voiceTaskLaunchRequest > 0) {
+            if (showIntro) viewModel.completeOnboarding()
+            navController.navigate(Screen.Tasks.route) {
                 launchSingleTop = true
             }
         }
@@ -291,7 +315,17 @@ fun PlannerApp(
                 }
             }
         },
-        floatingActionButton = {}
+        floatingActionButton = {
+            if (!showIntro && currentRoute == Screen.Tasks.route) {
+                VoiceTaskFloatingCapture(
+                    state = state,
+                    launchRequest = voiceTaskLaunchRequest,
+                    onSaveTask = viewModel::saveTask,
+                    onDeleteTask = viewModel::deleteTask,
+                    onEditTask = { navController.navigate("${Screen.TaskDetail.route}/${it.id}") }
+                )
+            }
+        }
     ) { padding ->
         if (showIntro) {
             WorkdayIntroScreen(
@@ -329,6 +363,7 @@ fun PlannerApp(
                     onClockOut = viewModel::clockOut,
                     onSaveTimecardEntry = viewModel::saveTimecardEntry,
                     onAddChecklist = viewModel::addChecklistTemplate,
+                    onSaveVoiceTask = viewModel::saveTask,
                     onOpenPremium = { showPremiumScreen = true }
                 )
             }
@@ -373,7 +408,7 @@ fun PlannerApp(
                 ScheduleScreen(
                     state = state,
                     onAddShift = viewModel::saveShift,
-                    onAddTask = viewModel::saveTask,
+                    onAddTask = { viewModel.saveTask(it) },
                     onDeleteShift = viewModel::deleteShift,
                     onSaveShiftTemplate = viewModel::saveShiftTemplate,
                     onDeleteShiftTemplate = viewModel::deleteShiftTemplate,
@@ -422,6 +457,7 @@ fun PlannerApp(
                         onWidgetLayoutModeChanged = viewModel::setWidgetLayoutMode,
                         onPaySettingsChanged = viewModel::setPaySettings,
                         onShiftAlarmSettingsChanged = viewModel::setShiftAlarmSettings,
+                        onAlarmSettingsChanged = viewModel::setAlarmSettings,
                         calendars = calendars,
                         calendarMessage = calendarMessage,
                         onLoadCalendars = viewModel::loadCalendars,
@@ -444,7 +480,7 @@ fun PlannerApp(
                         viewModel.saveTask(it)
                         navController.popBackStack()
                     },
-                    onSaveAndContinue = viewModel::saveTask,
+                    onSaveAndContinue = { viewModel.saveTask(it) },
                     onSaveTaskTemplate = viewModel::saveTaskTemplate,
                     onDeleteTaskTemplate = viewModel::deleteTaskTemplate,
                     onNotificationPermissionNeeded = onNotificationPermissionNeeded,
@@ -480,6 +516,240 @@ private fun AppState.hasPlannerData(): Boolean {
         daysOff.isNotEmpty() ||
         trainingItems.isNotEmpty() ||
         timecards.isNotEmpty()
+}
+
+@Composable
+private fun VoiceTaskFloatingCapture(
+    state: AppState,
+    launchRequest: Int,
+    onSaveTask: (TaskItem) -> TaskItem,
+    onDeleteTask: (String) -> Unit,
+    onEditTask: (TaskItem) -> Unit
+) {
+    val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+    var listening by remember { mutableStateOf(false) }
+    var processing by remember { mutableStateOf(false) }
+    var partialTranscript by remember { mutableStateOf("") }
+    var voiceError by remember { mutableStateOf<String?>(null) }
+    var pendingPermissionStart by remember { mutableStateOf(false) }
+    var createdVoiceTasks by remember { mutableStateOf<List<TaskItem>>(emptyList()) }
+    var ambiguousVoiceTask by remember { mutableStateOf<VoiceTaskParseResult?>(null) }
+    var duplicateCandidate by remember { mutableStateOf<TaskItem?>(null) }
+    var lastFingerprint by remember { mutableStateOf<String?>(null) }
+    var lastCreatedAt by remember { mutableStateOf<LocalDateTime?>(null) }
+    val recognizerAvailable = remember { SpeechRecognizer.isRecognitionAvailable(context) }
+    val speechRecognizer = remember(recognizerAvailable) {
+        if (recognizerAvailable) SpeechRecognizer.createSpeechRecognizer(context) else null
+    }
+    val audioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            pendingPermissionStart = true
+        } else {
+            voiceError = "Microphone permission denied. You can still add tasks by typing."
+        }
+    }
+
+    fun saveParsedTasks(parsed: List<VoiceTaskParseResult>) {
+        val tasksToSave = parsed.map { it.toTask(alarmDelivery = state.alarmSettings.defaultAlarmDelivery) }
+        val firstDuplicate = tasksToSave.firstOrNull { task ->
+            isRecentVoiceDuplicate(state.tasks, task) || isImmediateDuplicate(lastFingerprint, lastCreatedAt, task)
+        }
+        if (firstDuplicate != null) {
+            duplicateCandidate = firstDuplicate
+            voiceError = null
+            return
+        }
+        val saved = tasksToSave.map(onSaveTask)
+        createdVoiceTasks = saved
+        lastFingerprint = saved.lastOrNull()?.voiceTaskFingerprint()
+        lastCreatedAt = LocalDateTime.now()
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
+
+    fun applyCorrection(text: String): Boolean {
+        val latest = createdVoiceTasks.lastOrNull() ?: return false
+        if (latest.createdAt.isBefore(LocalDateTime.now().minusSeconds(20))) return false
+        val corrected = applyVoiceTaskCorrection(latest, text) ?: return false
+        val saved = onSaveTask(corrected)
+        createdVoiceTasks = listOf(saved)
+        lastFingerprint = saved.voiceTaskFingerprint()
+        lastCreatedAt = LocalDateTime.now()
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        return true
+    }
+
+    fun processTranscript(text: String) {
+        val transcript = text.trim()
+        processing = true
+        if (transcript.isBlank()) {
+            processing = false
+            voiceError = "Couldn't hear that. Tap to try again."
+            return
+        }
+        if (applyCorrection(transcript)) {
+            processing = false
+            return
+        }
+        if (transcript.equals("cancel that", ignoreCase = true) && createdVoiceTasks.isNotEmpty()) {
+            createdVoiceTasks.forEach { onDeleteTask(it.id) }
+            createdVoiceTasks = emptyList()
+            processing = false
+            return
+        }
+        val parsed = parseVoiceTaskResults(transcript, state)
+        val first = parsed.firstOrNull()
+        if (parsed.size == 1 && first != null && "AM/PM unclear" in first.ambiguityReasons && first.dueAt != null) {
+            ambiguousVoiceTask = first
+            processing = false
+            return
+        }
+        saveParsedTasks(parsed)
+        processing = false
+    }
+
+    fun startVoiceCapture() {
+        val recognizer = speechRecognizer
+        if (!recognizerAvailable || recognizer == null) {
+            voiceError = "Speech recognition is not available on this device."
+            return
+        }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            voiceError = "Workday Planner needs microphone access to turn speech into a task."
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        partialTranscript = ""
+        voiceError = null
+        duplicateCandidate = null
+        ambiguousVoiceTask = null
+        listening = true
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        runCatching {
+            recognizer.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak one work task")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                }
+            })
+        }.onFailure {
+            listening = false
+            voiceError = "Couldn't hear that. Tap to try again."
+        }
+    }
+
+    fun stopVoiceCapture() {
+        speechRecognizer?.stopListening()
+        listening = false
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    }
+
+    fun cancelVoiceCapture() {
+        speechRecognizer?.cancel()
+        listening = false
+        partialTranscript = ""
+        voiceError = null
+    }
+
+    DisposableEffect(speechRecognizer) {
+        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                voiceError = null
+            }
+
+            override fun onBeginningOfSpeech() = Unit
+            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onBufferReceived(buffer: ByteArray?) = Unit
+
+            override fun onEndOfSpeech() {
+                listening = false
+            }
+
+            override fun onError(error: Int) {
+                listening = false
+                voiceError = voiceTaskErrorMessage(error, partialTranscript)
+                if (partialTranscript.isNotBlank() && error == SpeechRecognizer.ERROR_NO_MATCH) {
+                    processTranscript(partialTranscript)
+                }
+            }
+
+            override fun onResults(results: Bundle?) {
+                listening = false
+                processTranscript(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty())
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                partialTranscript = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+            }
+
+            override fun onEvent(eventType: Int, params: Bundle?) = Unit
+        })
+        onDispose { speechRecognizer?.destroy() }
+    }
+
+    LaunchedEffect(pendingPermissionStart) {
+        if (pendingPermissionStart) {
+            pendingPermissionStart = false
+            startVoiceCapture()
+        }
+    }
+    LaunchedEffect(launchRequest) {
+        if (launchRequest > 0) startVoiceCapture()
+    }
+    LaunchedEffect(createdVoiceTasks) {
+        if (createdVoiceTasks.isNotEmpty()) {
+            delay(8000)
+            createdVoiceTasks = emptyList()
+        }
+    }
+
+    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.width(340.dp)) {
+        when {
+            listening || processing -> VoiceTaskListeningCard(
+                transcript = if (processing) "Creating task..." else partialTranscript,
+                error = voiceError,
+                onCancel = ::cancelVoiceCapture,
+                onStop = ::stopVoiceCapture
+            )
+            ambiguousVoiceTask != null -> VoiceTaskAmbiguityCard(
+                result = ambiguousVoiceTask!!,
+                onChoose = { adjusted ->
+                    saveParsedTasks(listOf(adjusted))
+                    ambiguousVoiceTask = null
+                },
+                onCancel = { ambiguousVoiceTask = null }
+            )
+            duplicateCandidate != null -> VoiceTaskDuplicateCard(
+                onKeep = {
+                    val saved = onSaveTask(duplicateCandidate!!)
+                    createdVoiceTasks = listOf(saved)
+                    duplicateCandidate = null
+                },
+                onDismiss = { duplicateCandidate = null }
+            )
+            createdVoiceTasks.isNotEmpty() -> VoiceTaskBatchConfirmationCard(
+                tasks = createdVoiceTasks,
+                onUndo = {
+                    createdVoiceTasks.forEach { onDeleteTask(it.id) }
+                    createdVoiceTasks = emptyList()
+                },
+                onEdit = { createdVoiceTasks.lastOrNull()?.let(onEditTask) }
+            )
+            voiceError != null -> VoiceTaskErrorCard(message = voiceError.orEmpty(), onRetry = ::startVoiceCapture)
+        }
+        FloatingActionButton(
+            onClick = { if (listening) stopVoiceCapture() else startVoiceCapture() },
+            containerColor = if (listening) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
+            contentColor = if (listening) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimaryContainer
+        ) {
+            Icon(
+                if (listening) Icons.Default.Stop else Icons.Default.Mic,
+                contentDescription = if (listening) "Stop listening for voice task" else "Start voice task"
+            )
+        }
+    }
 }
 
 @Composable
@@ -595,6 +865,7 @@ private fun TaskListScreen(
     onClockOut: () -> Unit,
     onSaveTimecardEntry: (TimecardEntry) -> Unit,
     onAddChecklist: (String) -> Unit,
+    onSaveVoiceTask: (TaskItem) -> TaskItem,
     onOpenPremium: () -> Unit
 ) {
     val today = LocalDate.now()
@@ -665,7 +936,10 @@ private fun TaskListScreen(
                 onScheduleShortcut = onScheduleShortcut,
                 onImportSchedule = onImportSchedule,
                 onMarkTodayOff = onMarkTodayOff,
-                onWeeklyReview = onWeeklyReview
+                onWeeklyReview = onWeeklyReview,
+                onSaveVoiceTask = onSaveVoiceTask,
+                onEditVoiceTask = onTaskClick,
+                onUndoVoiceTask = onDelete
             )
             TimecardSection(
                 state = state,
@@ -700,7 +974,10 @@ private fun TaskListScreen(
                 onScheduleShortcut = onScheduleShortcut,
                 onImportSchedule = onImportSchedule,
                 onMarkTodayOff = onMarkTodayOff,
-                onWeeklyReview = onWeeklyReview
+                onWeeklyReview = onWeeklyReview,
+                onSaveVoiceTask = onSaveVoiceTask,
+                onEditVoiceTask = onTaskClick,
+                onUndoVoiceTask = onDelete
             )
         }
         item {
@@ -1643,10 +1920,32 @@ private fun CommandCenterCard(
     onScheduleShortcut: () -> Unit,
     onImportSchedule: () -> Unit,
     onMarkTodayOff: () -> Unit,
-    onWeeklyReview: () -> Unit
+    onWeeklyReview: () -> Unit,
+    onSaveVoiceTask: (TaskItem) -> TaskItem,
+    onEditVoiceTask: (TaskItem) -> Unit,
+    onUndoVoiceTask: (String) -> Unit
 ) {
+    val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     val today = LocalDate.now()
     val now = LocalDateTime.now()
+    var listening by remember { mutableStateOf(false) }
+    var partialTranscript by remember { mutableStateOf("") }
+    var voiceError by remember { mutableStateOf<String?>(null) }
+    var pendingPermissionStart by remember { mutableStateOf(false) }
+    var createdVoiceTask by remember { mutableStateOf<TaskItem?>(null) }
+    var ambiguousVoiceTask by remember { mutableStateOf<VoiceTaskParseResult?>(null) }
+    val recognizerAvailable = remember { SpeechRecognizer.isRecognitionAvailable(context) }
+    val speechRecognizer = remember(recognizerAvailable) {
+        if (recognizerAvailable) SpeechRecognizer.createSpeechRecognizer(context) else null
+    }
+    val audioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            pendingPermissionStart = true
+        } else {
+            voiceError = "Microphone permission denied. You can still add tasks by typing."
+        }
+    }
     val todayShifts = state.shifts.filter { it.date == today }.sortedBy { it.start }
     val nextShift = state.shifts
         .filter { shift -> shift.endDateTime().isAfter(now) }
@@ -1657,6 +1956,115 @@ private fun CommandCenterCard(
     val remindersToday = state.tasks.filter { !it.completed && it.alarmAt?.toLocalDate() == today }
     val weekHours = PayEstimator.estimateWeek(state, today).paidHours
     val watchOuts = dashboardWatchOuts(state, today, now, nextShift, overdueTasks)
+
+    fun createTaskFromTranscript(text: String) {
+        val transcript = text.trim()
+        if (transcript.isBlank()) {
+            voiceError = "Couldn't hear that. Tap to try again."
+            return
+        }
+        val parsed = VoiceTaskParser.parse(transcript)
+        if ("AM/PM unclear" in parsed.ambiguityReasons && parsed.dueAt != null) {
+            ambiguousVoiceTask = parsed
+            partialTranscript = transcript
+            voiceError = null
+            return
+        }
+        val task = parsed.toTask(alarmDelivery = state.alarmSettings.defaultAlarmDelivery)
+        val savedTask = onSaveVoiceTask(task)
+        createdVoiceTask = savedTask
+        partialTranscript = transcript
+        voiceError = null
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
+
+    fun startVoiceCapture() {
+        val recognizer = speechRecognizer
+        if (!recognizerAvailable || recognizer == null) {
+            voiceError = "Speech recognition is not available on this device."
+            return
+        }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            voiceError = "Workday Planner needs microphone access to turn speech into a task."
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        partialTranscript = ""
+        voiceError = null
+        createdVoiceTask = null
+        ambiguousVoiceTask = null
+        listening = true
+        runCatching {
+            recognizer.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak one work task")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                }
+            })
+        }.onFailure {
+            listening = false
+            voiceError = "Couldn't hear that. Tap to try again."
+        }
+    }
+
+    fun stopVoiceCapture() {
+        speechRecognizer?.stopListening()
+        listening = false
+    }
+
+    fun cancelVoiceCapture() {
+        speechRecognizer?.cancel()
+        listening = false
+        partialTranscript = ""
+        voiceError = null
+    }
+
+    DisposableEffect(speechRecognizer) {
+        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                voiceError = null
+            }
+
+            override fun onBeginningOfSpeech() = Unit
+            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onBufferReceived(buffer: ByteArray?) = Unit
+
+            override fun onEndOfSpeech() {
+                listening = false
+            }
+
+            override fun onError(error: Int) {
+                listening = false
+                voiceError = voiceTaskErrorMessage(error, partialTranscript)
+                if (partialTranscript.isNotBlank() && error == SpeechRecognizer.ERROR_NO_MATCH) {
+                    createTaskFromTranscript(partialTranscript)
+                }
+            }
+
+            override fun onResults(results: Bundle?) {
+                listening = false
+                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                partialTranscript = text
+                createTaskFromTranscript(text)
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                partialTranscript = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+            }
+
+            override fun onEvent(eventType: Int, params: Bundle?) = Unit
+        })
+        onDispose { speechRecognizer?.destroy() }
+    }
+
+    LaunchedEffect(pendingPermissionStart) {
+        if (pendingPermissionStart) {
+            pendingPermissionStart = false
+            startVoiceCapture()
+        }
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -1718,6 +2126,44 @@ private fun CommandCenterCard(
         )
         if (watchOuts.isNotEmpty()) {
             DashboardWatchOutsCard(watchOuts)
+        }
+        Button(onClick = ::startVoiceCapture, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Default.Mic, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Speak task")
+        }
+        if (listening || partialTranscript.isNotBlank() && createdVoiceTask == null && ambiguousVoiceTask == null) {
+            VoiceTaskListeningCard(
+                transcript = partialTranscript,
+                error = voiceError,
+                onCancel = ::cancelVoiceCapture,
+                onStop = ::stopVoiceCapture
+            )
+        } else if (voiceError != null) {
+            VoiceTaskErrorCard(message = voiceError.orEmpty(), onRetry = ::startVoiceCapture)
+        }
+        ambiguousVoiceTask?.let { result ->
+            VoiceTaskAmbiguityCard(
+                result = result,
+                onChoose = { adjusted ->
+                    val task = adjusted.toTask(alarmDelivery = state.alarmSettings.defaultAlarmDelivery)
+                    val savedTask = onSaveVoiceTask(task)
+                    createdVoiceTask = savedTask
+                    ambiguousVoiceTask = null
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                },
+                onCancel = { ambiguousVoiceTask = null }
+            )
+        }
+        createdVoiceTask?.let { task ->
+            VoiceTaskConfirmationCard(
+                task = task,
+                onUndo = {
+                    onUndoVoiceTask(task.id)
+                    createdVoiceTask = null
+                },
+                onEdit = { onEditVoiceTask(task) }
+            )
         }
         SectionHeader("Quick actions")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
@@ -2165,6 +2611,292 @@ private fun DashboardActionButton(
             Spacer(Modifier.width(8.dp))
             Text(label)
         }
+    }
+}
+
+@Composable
+private fun VoiceTaskListeningCard(
+    transcript: String,
+    error: String?,
+    onCancel: () -> Unit,
+    onStop: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Default.Mic, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                Column(Modifier.weight(1f)) {
+                    Text("Listening...", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text(
+                        transcript.ifBlank { "Say one task, like \"Box meat truck order at 11:30 AM.\"" },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+            error?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
+                    Text("Cancel")
+                }
+                Button(onClick = onStop, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Stop, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Stop")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VoiceTaskErrorCard(message: String, onRetry: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(message, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = onRetry) {
+                Text("Try again")
+            }
+        }
+    }
+}
+
+@Composable
+private fun VoiceTaskConfirmationCard(task: TaskItem, onUndo: () -> Unit, onEdit: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.successContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.success.copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(task.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSuccessContainer)
+            Text(
+                voiceTaskSummary(task),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSuccessContainer
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onUndo, modifier = Modifier.weight(1f)) {
+                    Text("Undo")
+                }
+                Button(onClick = onEdit, modifier = Modifier.weight(1f)) {
+                    Text("Edit")
+                }
+            }
+        }
+    }
+}
+
+private fun voiceTaskSummary(task: TaskItem): String {
+    val due = task.deadline?.let { "Due ${it.format(timeFormatter)}" }
+    val alarm = task.alarmAt?.let {
+        when (task.alarmDispatchStatus) {
+            AlarmDispatchStatus.SentToSystemClock -> "Alarm sent to Clock for ${it.format(timeFormatter)}"
+            AlarmDispatchStatus.SystemClockFallbackScheduled -> "Clock unavailable; Workday Planner alarm ${it.format(timeFormatter)}"
+            AlarmDispatchStatus.ExactAlarmAccessNeeded -> "Alarm access needed for ${it.format(timeFormatter)}"
+            AlarmDispatchStatus.ScheduledInApp -> "Workday Planner alarm ${it.format(timeFormatter)}"
+            AlarmDispatchStatus.ScheduledNotification -> "Notification ${it.format(timeFormatter)}"
+            else -> "Alarm ${it.format(timeFormatter)}"
+        }
+    }
+    return listOfNotNull(due, alarm).ifEmpty { listOf("Task saved without an alarm") }.joinToString(" • ")
+}
+
+@Composable
+private fun VoiceTaskBatchConfirmationCard(tasks: List<TaskItem>, onUndo: () -> Unit, onEdit: () -> Unit) {
+    if (tasks.size == 1) {
+        VoiceTaskConfirmationCard(task = tasks.first(), onUndo = onUndo, onEdit = onEdit)
+        return
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.successContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.success.copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("${tasks.size} tasks created", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSuccessContainer)
+            tasks.take(3).forEach {
+                Text(it.title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSuccessContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onUndo, modifier = Modifier.weight(1f)) { Text("Undo all") }
+                Button(onClick = onEdit, modifier = Modifier.weight(1f)) { Text("Edit") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VoiceTaskDuplicateCard(onKeep: () -> Unit, onDismiss: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.warningContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.warning.copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("This task was just created.", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onWarningContainer)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Dismiss") }
+                Button(onClick = onKeep, modifier = Modifier.weight(1f)) { Text("Keep duplicate") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VoiceTaskAmbiguityCard(
+    result: VoiceTaskParseResult,
+    onChoose: (VoiceTaskParseResult) -> Unit,
+    onCancel: () -> Unit
+) {
+    val due = result.dueAt ?: return
+    val hour12 = due.hour % 12
+    val displayHour = if (hour12 == 0) 12 else hour12
+    val amDue = due.withHour(if (displayHour == 12) 0 else displayHour)
+    val pmDue = due.withHour(if (displayHour == 12) 12 else displayHour + 12)
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Which time did you mean?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(result.title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { onChoose(result.withDueTime(amDue)) }, modifier = Modifier.weight(1f)) {
+                    Text(amDue.format(timeFormatter))
+                }
+                Button(onClick = { onChoose(result.withDueTime(pmDue)) }, modifier = Modifier.weight(1f)) {
+                    Text(pmDue.format(timeFormatter))
+                }
+            }
+            TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.End)) {
+                Text("Cancel")
+            }
+        }
+    }
+}
+
+private fun parseVoiceTaskResults(transcript: String, state: AppState): List<VoiceTaskParseResult> {
+    val shiftAware = applyShiftRelativeVoiceTerms(transcript, state)
+    val parts = splitClearMultiTaskSentence(shiftAware)
+    return parts.map { VoiceTaskParser.parse(it) }
+}
+
+private fun splitClearMultiTaskSentence(transcript: String): List<String> {
+    val normalized = transcript.trim()
+    val markers = Regex("\\bat\\s+(\\d{1,2}|noon|midnight)\\b", RegexOption.IGNORE_CASE).findAll(normalized).toList()
+    if (markers.size < 2) return listOf(normalized)
+    val starts = markers.map { it.range.first }
+    return starts.mapIndexed { index, start ->
+        val end = starts.getOrNull(index + 1) ?: normalized.length
+        normalized.substring(start, end)
+            .replace(Regex("^(and\\s+)?", RegexOption.IGNORE_CASE), "")
+            .trim(' ', ',', '.')
+    }.filter { it.isNotBlank() }
+}
+
+private fun applyShiftRelativeVoiceTerms(transcript: String, state: AppState): String {
+    val lower = transcript.lowercase()
+    val shift = state.shifts
+        .filter { it.date == LocalDate.now() || it.date == LocalDate.now().plusDays(1) }
+        .sortedWith(compareBy<WorkShift> { it.date }.thenBy { it.start })
+        .firstOrNull() ?: return transcript
+    val closing = LocalDateTime.of(shift.date, shift.end)
+    val start = LocalDateTime.of(shift.date, shift.start)
+    val replacementTime = when {
+        "one hour before closing" in lower -> closing.minusHours(1)
+        "halfway through my shift" in lower -> start.plusMinutes(Duration.between(start, closing).toMinutes() / 2)
+        "at the start of my shift" in lower || "before my shift" in lower -> start
+        "at closing" in lower || "before closing" in lower -> closing
+        "after lunch" in lower -> start.plusHours(5)
+        "before lunch" in lower -> start.plusHours(4)
+        else -> null
+    } ?: return transcript
+    return transcript
+        .replace(Regex("one hour before closing", RegexOption.IGNORE_CASE), "at ${replacementTime.format(timeFormatter)}")
+        .replace(Regex("halfway through my shift", RegexOption.IGNORE_CASE), "at ${replacementTime.format(timeFormatter)}")
+        .replace(Regex("at the start of my shift|before my shift|at closing|before closing|after lunch|before lunch", RegexOption.IGNORE_CASE), "at ${replacementTime.format(timeFormatter)}")
+}
+
+private fun applyVoiceTaskCorrection(task: TaskItem, transcript: String): TaskItem? {
+    val lower = transcript.lowercase().trim()
+    val due = task.deadline
+    return when {
+        lower == "am" && due != null -> task.withCorrectedDue(due.withHour(if (due.hour % 12 == 0) 0 else due.hour % 12))
+        lower == "pm" && due != null -> {
+            val hour = due.hour % 12
+            task.withCorrectedDue(due.withHour(if (hour == 0) 12 else hour + 12))
+        }
+        lower.contains("change it to noon") && due != null -> task.withCorrectedDue(due.withHour(12).withMinute(0))
+        lower.contains("make that tomorrow") && due != null -> task.withCorrectedDue(due.plusDays(1))
+        lower.contains("remind me an hour before") && due != null -> task.copy(alarmOffsetMinutes = 60, alarmAt = due.minusHours(1))
+        lower.contains("repeat every friday") -> task.copy(repeatRule = RepeatRule.Weekly, repeatDays = setOf(DayOfWeek.FRIDAY))
+        lower.contains("make it high priority") -> task.copy(priority = TaskPriority.High)
+        else -> null
+    }
+}
+
+private fun TaskItem.withCorrectedDue(newDue: LocalDateTime): TaskItem {
+    val newAlarm = if (reminderType == ReminderType.None) null else newDue.minusMinutes(alarmOffsetMinutes)
+    return copy(deadline = newDue, alarmAt = newAlarm)
+}
+
+private fun TaskItem.voiceTaskFingerprint(): String {
+    return "${title.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()}|${deadline ?: "none"}|voice"
+}
+
+private fun isRecentVoiceDuplicate(tasks: List<TaskItem>, candidate: TaskItem): Boolean {
+    val fingerprint = candidate.voiceTaskFingerprint()
+    val cutoff = LocalDateTime.now().minusSeconds(90)
+    return tasks.any {
+        it.createdUsingVoice &&
+            it.createdAt.isAfter(cutoff) &&
+            it.voiceTaskFingerprint() == fingerprint
+    }
+}
+
+private fun isImmediateDuplicate(lastFingerprint: String?, lastCreatedAt: LocalDateTime?, candidate: TaskItem): Boolean {
+    return lastFingerprint == candidate.voiceTaskFingerprint() &&
+        lastCreatedAt?.isAfter(LocalDateTime.now().minusSeconds(15)) == true
+}
+
+private fun VoiceTaskParseResult.withDueTime(newDueAt: LocalDateTime): VoiceTaskParseResult {
+    val newAlarmAt = when {
+        reminderType == com.example.workdayplanner.data.ReminderType.None -> null
+        reminderOffsetMinutes == 0L -> newDueAt
+        else -> newDueAt.minusMinutes(reminderOffsetMinutes)
+    }
+    return copy(
+        dueAt = newDueAt,
+        alarmAt = newAlarmAt,
+        ambiguityReasons = ambiguityReasons - "AM/PM unclear",
+        confidence = confidence.coerceAtLeast(0.9)
+    )
+}
+
+private fun voiceTaskErrorMessage(error: Int, partialTranscript: String): String {
+    if (partialTranscript.isNotBlank() && error == SpeechRecognizer.ERROR_NO_MATCH) {
+        return ""
+    }
+    return when (error) {
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission denied. You can still add tasks by typing."
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Microphone is busy. Tap to try again."
+        SpeechRecognizer.ERROR_AUDIO -> "Couldn't hear that. Tap to try again."
+        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition is unavailable right now. Tap to try again."
+        SpeechRecognizer.ERROR_CLIENT -> "Voice task cancelled."
+        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Couldn't hear that. Tap to try again."
+        else -> "Couldn't hear that. Tap to try again."
     }
 }
 
@@ -3811,6 +4543,23 @@ private fun TaskDetailScreen(
     val advancedRulesUnlocked = PremiumAccess.canUse(state, PremiumFeature.AdvancedTaskRules)
     val templatesUnlocked = PremiumAccess.canUse(state, PremiumFeature.TaskTemplates)
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+    var voiceListening by remember { mutableStateOf(false) }
+    var voiceTranscript by remember { mutableStateOf("") }
+    var voiceError by remember { mutableStateOf<String?>(null) }
+    var pendingVoicePermissionStart by remember { mutableStateOf(false) }
+    var ambiguousEditorVoiceTask by remember { mutableStateOf<VoiceTaskParseResult?>(null) }
+    val recognizerAvailable = remember { SpeechRecognizer.isRecognitionAvailable(context) }
+    val speechRecognizer = remember(recognizerAvailable) {
+        if (recognizerAvailable) SpeechRecognizer.createSpeechRecognizer(context) else null
+    }
+    val audioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            pendingVoicePermissionStart = true
+        } else {
+            voiceError = "Microphone permission denied. You can still add tasks by typing."
+        }
+    }
     val nextShift = remember(state.shifts) {
         val now = LocalDateTime.now()
         state.shifts
@@ -3869,12 +4618,141 @@ private fun TaskDetailScreen(
             onNotificationPermissionNeeded()
         }
     }
+    fun saveVoiceTranscript(text: String) {
+        val transcript = text.trim()
+        if (transcript.isBlank()) {
+            voiceError = "Couldn't hear that. Tap to try again."
+            return
+        }
+        val parsed = VoiceTaskParser.parse(transcript)
+        if ("AM/PM unclear" in parsed.ambiguityReasons && parsed.dueAt != null) {
+            ambiguousEditorVoiceTask = parsed
+            voiceTranscript = transcript
+            voiceError = null
+            return
+        }
+        val taskFromVoice = parsed.toTask(alarmDelivery = state.alarmSettings.defaultAlarmDelivery)
+        if (
+            taskFromVoice.alarmAt != null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            onNotificationPermissionNeeded()
+        }
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        onSave(taskFromVoice)
+    }
+    fun startVoiceTaskFromEditor() {
+        val recognizer = speechRecognizer
+        if (!recognizerAvailable || recognizer == null) {
+            voiceError = "Speech recognition is not available on this device."
+            return
+        }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            voiceError = "Workday Planner needs microphone access to turn speech into a task."
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        voiceTranscript = ""
+        voiceError = null
+        ambiguousEditorVoiceTask = null
+        voiceListening = true
+        runCatching {
+            recognizer.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak one work task")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                }
+            })
+        }.onFailure {
+            voiceListening = false
+            voiceError = "Couldn't hear that. Tap to try again."
+        }
+    }
+    DisposableEffect(speechRecognizer) {
+        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                voiceError = null
+            }
+
+            override fun onBeginningOfSpeech() = Unit
+            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onBufferReceived(buffer: ByteArray?) = Unit
+
+            override fun onEndOfSpeech() {
+                voiceListening = false
+            }
+
+            override fun onError(error: Int) {
+                voiceListening = false
+                voiceError = voiceTaskErrorMessage(error, voiceTranscript)
+                if (voiceTranscript.isNotBlank() && error == SpeechRecognizer.ERROR_NO_MATCH) {
+                    saveVoiceTranscript(voiceTranscript)
+                }
+            }
+
+            override fun onResults(results: Bundle?) {
+                voiceListening = false
+                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                voiceTranscript = text
+                saveVoiceTranscript(text)
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                voiceTranscript = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+            }
+
+            override fun onEvent(eventType: Int, params: Bundle?) = Unit
+        })
+        onDispose { speechRecognizer?.destroy() }
+    }
+    LaunchedEffect(pendingVoicePermissionStart) {
+        if (pendingVoicePermissionStart) {
+            pendingVoicePermissionStart = false
+            startVoiceTaskFromEditor()
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text(task?.let { "Edit task" } ?: "Add task", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        OutlinedButton(onClick = ::startVoiceTaskFromEditor, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Default.Mic, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Speak task")
+        }
+        if (voiceListening) {
+            VoiceTaskListeningCard(
+                transcript = voiceTranscript,
+                error = voiceError,
+                onCancel = {
+                    speechRecognizer?.cancel()
+                    voiceListening = false
+                    voiceTranscript = ""
+                    voiceError = null
+                },
+                onStop = {
+                    speechRecognizer?.stopListening()
+                    voiceListening = false
+                }
+            )
+        } else if (voiceError != null) {
+            VoiceTaskErrorCard(message = voiceError.orEmpty(), onRetry = ::startVoiceTaskFromEditor)
+        }
+        ambiguousEditorVoiceTask?.let { result ->
+            VoiceTaskAmbiguityCard(
+                result = result,
+                onChoose = { adjusted ->
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onSave(adjusted.toTask(alarmDelivery = state.alarmSettings.defaultAlarmDelivery))
+                },
+                onCancel = { ambiguousEditorVoiceTask = null }
+            )
+        }
         Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Task", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -5937,6 +6815,7 @@ private fun SettingsScreen(
     onWidgetLayoutModeChanged: (WidgetLayoutMode) -> Unit,
     onPaySettingsChanged: (PaySettings) -> Unit,
     onShiftAlarmSettingsChanged: (ShiftAlarmSettings) -> Unit,
+    onAlarmSettingsChanged: (AlarmSettings) -> Unit,
     calendars: List<DeviceCalendar>,
     calendarMessage: String?,
     onLoadCalendars: () -> Unit,
@@ -5964,6 +6843,11 @@ private fun SettingsScreen(
         ShiftAlarmSettingsSection(
             state = state,
             onSettingsChanged = onShiftAlarmSettingsChanged,
+            onNotificationPermissionNeeded = onNotificationPermissionNeeded
+        )
+        AlarmDeliverySettingsSection(
+            state = state,
+            onSettingsChanged = onAlarmSettingsChanged,
             onNotificationPermissionNeeded = onNotificationPermissionNeeded
         )
         CalendarSyncSection(
@@ -6074,6 +6958,143 @@ private fun shiftAlarmOffsetLabel(minutes: Int): String {
         remaining == 0 -> "${hours} hr"
         else -> "${hours} hr ${remaining} min"
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AlarmDeliverySettingsSection(
+    state: AppState,
+    onSettingsChanged: (AlarmSettings) -> Unit,
+    onNotificationPermissionNeeded: () -> Unit
+) {
+    val context = LocalContext.current
+    val settings = state.alarmSettings
+    var testMessage by remember { mutableStateOf<String?>(null) }
+    val alarmManager = remember { context.getSystemService(AlarmManager::class.java) }
+    val canExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms()
+
+    fun openAlarmAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
+    fun openSystemAlarms() {
+        val intent = Intent(AlarmClock.ACTION_SHOW_ALARMS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+        } else {
+            testMessage = "No system alarms screen was available on this device."
+        }
+    }
+
+    fun testAlarm() {
+        val alarmAt = LocalDateTime.now().plusMinutes(1).withSecond(0).withNano(0)
+        val task = TaskItem(
+            title = "Test alarm",
+            deadline = alarmAt.plusMinutes(settings.defaultReminderOffsetMinutes.toLong()),
+            alarmAt = alarmAt,
+            alarmDelivery = settings.defaultAlarmDelivery,
+            alarmLabel = "Workday Planner - Test alarm",
+            reminderType = ReminderType.FullAlarm,
+            alarmOffsetMinutes = settings.defaultReminderOffsetMinutes.toLong()
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            settings.defaultAlarmDelivery != AlarmDelivery.SystemClockAlarm &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            onNotificationPermissionNeeded()
+        }
+        val status = AlarmScheduler(context).schedule(task)
+        testMessage = when (status) {
+            com.example.workdayplanner.data.AlarmDispatchStatus.SentToSystemClock -> "Test sent to Clock for ${alarmAt.format(timeFormatter)}."
+            com.example.workdayplanner.data.AlarmDispatchStatus.ScheduledInApp -> "Workday Planner test alarm scheduled for ${alarmAt.format(timeFormatter)}."
+            com.example.workdayplanner.data.AlarmDispatchStatus.ScheduledNotification -> "Notification test scheduled for ${alarmAt.format(timeFormatter)}."
+            com.example.workdayplanner.data.AlarmDispatchStatus.SystemClockFallbackScheduled -> "No Clock app accepted the alarm. Workday Planner test alarm scheduled for ${alarmAt.format(timeFormatter)}."
+            com.example.workdayplanner.data.AlarmDispatchStatus.ExactAlarmAccessNeeded -> "Workday Planner needs alarm access to ring at the exact time."
+            com.example.workdayplanner.data.AlarmDispatchStatus.NoClockAppAvailable -> "No compatible Clock app was found. Workday Planner will use its own alarm if access is allowed."
+            else -> "Test alarm could not be scheduled. Check alarm and notification access."
+        }
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader("Task alarms", "Voice-created timed tasks use System Clock by default.")
+            Text("Default reminder", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0, 5, 15, 30, 60).forEach { minutes ->
+                    FilterChip(
+                        selected = settings.defaultReminderOffsetMinutes == minutes,
+                        onClick = { onSettingsChanged(settings.copy(defaultReminderOffsetMinutes = minutes)) },
+                        label = { Text(reminderOffsetLabel(minutes)) }
+                    )
+                }
+            }
+            Text("Alarm delivery", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            AlarmDelivery.values().forEach { delivery ->
+                FilterChip(
+                    selected = settings.defaultAlarmDelivery == delivery,
+                    onClick = { onSettingsChanged(settings.copy(defaultAlarmDelivery = delivery)) },
+                    label = {
+                        Text(if (delivery == AlarmDelivery.SystemClockAlarm) "${delivery.label} (recommended)" else delivery.label)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Text(
+                if (canExact) "Alarm access: allowed or not required on this Android version."
+                else "Alarm access: needed for Workday Planner-managed exact alarms.",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (canExact) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = ::openSystemAlarms, modifier = Modifier.weight(1f)) {
+                    Text("Open alarms")
+                }
+                OutlinedButton(onClick = ::openAlarmAccess, enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S, modifier = Modifier.weight(1f)) {
+                    Text("Alarm access")
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Vibration", style = MaterialTheme.typography.bodyLarge)
+                    Text("Use vibration for app-managed alarms.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = settings.vibration, onCheckedChange = { onSettingsChanged(settings.copy(vibration = it)) })
+            }
+            Text("Snooze default", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(5, 10, 15).forEach { minutes ->
+                    FilterChip(
+                        selected = settings.defaultSnoozeMinutes == minutes,
+                        onClick = { onSettingsChanged(settings.copy(defaultSnoozeMinutes = minutes)) },
+                        label = { Text("$minutes min") }
+                    )
+                }
+            }
+            Button(onClick = ::testAlarm, modifier = Modifier.fillMaxWidth()) {
+                Text("Test alarm in 1 minute")
+            }
+            testMessage?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { testMessage = "Good. Keep this delivery mode selected." }, modifier = Modifier.weight(1f)) { Text("I heard it") }
+                    OutlinedButton(onClick = { testMessage = "Check alarm volume, battery restrictions, and selected delivery mode." }, modifier = Modifier.weight(1f)) { Text("Too quiet") }
+                    OutlinedButton(onClick = { testMessage = "Check alarm access, notification access, Clock alarm volume, battery restrictions, and Do Not Disturb." }, modifier = Modifier.weight(1f)) { Text("No ring") }
+                }
+            }
+        }
+    }
+}
+
+private fun reminderOffsetLabel(minutes: Int): String = when (minutes) {
+    0 -> "At due time"
+    60 -> "1 hr before"
+    else -> "$minutes min before"
 }
 
 @Composable

@@ -25,10 +25,14 @@ import com.example.workdayplanner.ui.WorkdayPlannerTheme
 class MainActivity : ComponentActivity() {
     private val viewModel: PlannerViewModel by viewModels()
     private var requestedTaskId by mutableStateOf<String?>(null)
+    private var voiceTaskLaunchRequest by mutableStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestedTaskId = intent.getStringExtra(EXTRA_OPEN_TASK_ID)
+        if (intent.action == ACTION_VOICE_TASK) {
+            voiceTaskLaunchRequest += 1
+        }
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
             val systemDark = isSystemInDarkTheme()
@@ -49,6 +53,7 @@ class MainActivity : ComponentActivity() {
                     PlannerApp(
                         viewModel = viewModel,
                         requestedTaskId = requestedTaskId,
+                        voiceTaskLaunchRequest = voiceTaskLaunchRequest,
                         onTaskRequestHandled = { requestedTaskId = null },
                         onNotificationPermissionNeeded = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -65,9 +70,13 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         requestedTaskId = intent.getStringExtra(EXTRA_OPEN_TASK_ID)
+        if (intent.action == ACTION_VOICE_TASK) {
+            voiceTaskLaunchRequest += 1
+        }
     }
 
     companion object {
         const val EXTRA_OPEN_TASK_ID = "open_task_id"
+        const val ACTION_VOICE_TASK = "com.example.workdayplanner.action.VOICE_TASK"
     }
 }
