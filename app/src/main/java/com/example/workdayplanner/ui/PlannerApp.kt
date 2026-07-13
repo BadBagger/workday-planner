@@ -2949,6 +2949,12 @@ internal fun parseVoiceTaskResults(transcript: String, state: AppState): List<Vo
 
 private fun splitClearMultiTaskSentence(transcript: String): List<String> {
     val normalized = transcript.trim()
+    // Alarm/reminder phrases often contain a second "at" time for the same task:
+    // "produce order due at 7:30 alarm at 7:20". Do not split those into
+    // separate tasks, or the title and alarm time get assigned incorrectly.
+    if (Regex("\\b(alarm|reminder|remind me)\\s+at\\b", RegexOption.IGNORE_CASE).containsMatchIn(normalized)) {
+        return listOf(normalized)
+    }
     val markers = Regex("\\bat\\s+(\\d{1,2}|noon|midnight)\\b", RegexOption.IGNORE_CASE).findAll(normalized).toList()
     if (markers.size < 2) return listOf(normalized)
     val starts = markers.map { it.range.first }

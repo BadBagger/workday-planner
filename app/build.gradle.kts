@@ -20,8 +20,8 @@ android {
         applicationId = "com.example.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 65
-        versionName = "2.45-fair-premium-trust"
+        versionCode = 66
+        versionName = "2.46-voice-parser-hotfix"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

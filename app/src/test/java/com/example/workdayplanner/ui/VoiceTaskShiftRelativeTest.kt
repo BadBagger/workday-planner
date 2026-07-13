@@ -38,4 +38,16 @@ class VoiceTaskShiftRelativeTest {
         assertEquals(DayOfWeek.MONDAY, date?.dayOfWeek)
         assertEquals(LocalDate.of(2026, 7, 13), date)
     }
+
+    @Test
+    fun keepsDueAndExplicitAlarmTimesInOneVoiceTask() {
+        val parsed = parseVoiceTaskResults("produce Order due at 7:30 alarm at 7:20", AppState())
+
+        assertEquals(1, parsed.size)
+        val task = parsed.single()
+        assertEquals("Produce Order", task.title)
+        assertEquals(LocalTime.of(7, 30), task.dueAt?.toLocalTime())
+        assertEquals(LocalTime.of(7, 20), task.alarmAt?.toLocalTime())
+        assertEquals(task.dueAt?.toLocalDate(), task.alarmAt?.toLocalDate())
+    }
 }
