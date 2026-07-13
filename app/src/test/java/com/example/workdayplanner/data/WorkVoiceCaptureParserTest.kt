@@ -39,6 +39,53 @@ class WorkVoiceCaptureParserTest {
     }
 
     @Test
+    fun taskListSplitsActionPhrasesJoinedByAnd() {
+        val result = WorkVoiceCaptureParser.format(
+            rawTranscript = "Opening tasks clean slicer and check dates and fill grab n go and follow up with night crew",
+            type = WorkVoiceCaptureType.TaskList
+        )
+
+        assertEquals("Opening Tasks", result.title)
+        assertTrue(result.cleanedText.contains("- Clean slicer"))
+        assertTrue(result.cleanedText.contains("- Check dates"))
+        assertTrue(result.cleanedText.contains("- Fill grab-and-go"))
+        assertTrue(result.cleanedText.contains("Reminder:"))
+        assertTrue(result.cleanedText.contains("- Follow up with night crew"))
+    }
+
+    @Test
+    fun managerHandoffBuildsStructuredSections() {
+        val result = WorkVoiceCaptureParser.format(
+            rawTranscript = "Got done fresh slice case and truck shorts. Still needs done chicken order. Issues label printer jammed. People notes Jason needs CBT. Follow up tomorrow with bakery.",
+            type = WorkVoiceCaptureType.ManagerHandoff
+        )
+
+        assertEquals("Manager Handoff", result.title)
+        assertEquals(WorkNoteKind.ManagerHandoff, result.kind)
+        assertTrue(result.cleanedText.contains("What got done:"))
+        assertTrue(result.cleanedText.contains("- Fresh slice case"))
+        assertTrue(result.cleanedText.contains("What still needs done:"))
+        assertTrue(result.cleanedText.contains("- Chicken order"))
+        assertTrue(result.cleanedText.contains("Issues:"))
+        assertTrue(result.cleanedText.contains("- Label printer jammed"))
+        assertTrue(result.cleanedText.contains("Follow-up tasks:"))
+        assertTrue(result.cleanedText.contains("- Tomorrow with bakery"))
+    }
+
+    @Test
+    fun shiftNoteNormalizesWorkplaceVocabulary() {
+        val result = WorkVoiceCaptureParser.format(
+            rawTranscript = "make a note check g g m and c b t list before filling grab n go",
+            type = WorkVoiceCaptureType.ShiftNote
+        )
+
+        assertEquals("Shift Note", result.title)
+        assertTrue(result.cleanedText.contains("GGM"))
+        assertTrue(result.cleanedText.contains("CBT"))
+        assertTrue(result.cleanedText.contains("grab-and-go"))
+    }
+
+    @Test
     fun futureAiFormatterIsPlaceholderOnly() {
         assertFalse(FutureAiFormatter.isAvailable())
         assertNull(FutureAiFormatter.format("test", WorkVoiceCaptureType.ShiftNote))

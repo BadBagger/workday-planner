@@ -447,6 +447,7 @@ fun PlannerApp(
                     onAddRepeatingTask = { navController.navigate("${Screen.TaskDetail.route}/new") },
                     onScheduleShortcut = { navController.navigate(Screen.Schedule.route) },
                     onImportSchedule = { navController.navigate(Screen.Import.route) },
+                    onOpenNotes = { navController.navigate(Screen.Notes.route) },
                     onMarkTodayOff = { viewModel.addTypedDayOff(LocalDate.now(), ShiftTemplateKind.DayOff) },
                     onWeeklyReview = { navController.navigate(Screen.WeeklyReview.route) },
                     onAddEvent = { navController.navigate("${Screen.EventDetail.route}/new") },
@@ -977,6 +978,7 @@ private fun TaskListScreen(
     onAddRepeatingTask: () -> Unit,
     onScheduleShortcut: () -> Unit,
     onImportSchedule: () -> Unit,
+    onOpenNotes: () -> Unit,
     onMarkTodayOff: () -> Unit,
     onWeeklyReview: () -> Unit,
     onAddEvent: () -> Unit,
@@ -1059,6 +1061,7 @@ private fun TaskListScreen(
                 onAddRepeatingTask = onAddRepeatingTask,
                 onScheduleShortcut = onScheduleShortcut,
                 onImportSchedule = onImportSchedule,
+                onOpenNotes = onOpenNotes,
                 onMarkTodayOff = onMarkTodayOff,
                 onWeeklyReview = onWeeklyReview,
                 onSaveVoiceTask = onSaveVoiceTask,
@@ -1097,6 +1100,7 @@ private fun TaskListScreen(
                 onAddRepeatingTask = onAddRepeatingTask,
                 onScheduleShortcut = onScheduleShortcut,
                 onImportSchedule = onImportSchedule,
+                onOpenNotes = onOpenNotes,
                 onMarkTodayOff = onMarkTodayOff,
                 onWeeklyReview = onWeeklyReview,
                 onSaveVoiceTask = onSaveVoiceTask,
@@ -2049,6 +2053,7 @@ private fun CommandCenterCard(
     onAddRepeatingTask: () -> Unit,
     onScheduleShortcut: () -> Unit,
     onImportSchedule: () -> Unit,
+    onOpenNotes: () -> Unit,
     onMarkTodayOff: () -> Unit,
     onWeeklyReview: () -> Unit,
     onSaveVoiceTask: (TaskItem) -> TaskItem,
@@ -2245,6 +2250,7 @@ private fun CommandCenterCard(
                 )
             }
         }
+        DashboardNotesCard(state = state, onOpenNotes = onOpenNotes)
         if (state.paySettings.showPayOnDashboard && state.paySettings.hourlyRate > 0.0) {
             DashboardPayEstimateCard(state)
         }
@@ -2664,7 +2670,8 @@ private fun BeforeShiftBriefCard(
 }
 
 @Composable
-private fun WorkNotesSummaryCard(state: AppState) {
+private fun DashboardNotesCard(state: AppState, onOpenNotes: () -> Unit) {
+    val today = LocalDate.now()
     val priorityKinds = setOf(
         WorkNoteKind.Manager,
         WorkNoteKind.ManagerHandoff,
@@ -2675,23 +2682,75 @@ private fun WorkNotesSummaryCard(state: AppState) {
         WorkNoteKind.FollowUp,
         WorkNoteKind.Meeting
     )
-    val notes = state.notes
-        .filter { !it.archived && (it.pinned || it.kind in priorityKinds) }
+    val visibleNotes = state.notes.filterNot { it.archived }
+    val todayNotes = visibleNotes.filter { it.date == today }
+    val priorityNotes = visibleNotes
+        .filter { it.pinned || it.date == today || it.kind in priorityKinds }
         .sortedWith(noteSort())
         .take(3)
-    if (notes.isEmpty()) return
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.42f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionHeader("Work notes to remember", "Manager notes, issues, and follow-ups.")
-            notes.forEach { note ->
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("${note.kind.label} - ${note.date.format(shortDateFormatter)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                    Text(note.title.ifBlank { note.text.lineSequence().firstOrNull().orEmpty() }.take(120), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Work notes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        when {
+                            visibleNotes.isEmpty() -> "Shift notes, handoffs, orders, and pay notes."
+                            todayNotes.isNotEmpty() -> "${todayNotes.size} note${if (todayNotes.size == 1) "" else "s"} from today"
+                            else -> "${visibleNotes.size} saved work note${if (visibleNotes.size == 1) "" else "s"}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+                AssistChip(
+                    onClick = onOpenNotes,
+                    label = { Text("Open") },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = null) }
+                )
+            }
+            if (priorityNotes.isEmpty()) {
+                Text(
+                    "No work notes yet. Add a quick shift note or voice capture when something needs remembered.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                priorityNotes.forEach { note ->
+                    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(note.kind.label) }
+                        )
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                note.title.ifBlank { note.text.lineSequence().firstOrNull().orEmpty() }.take(120),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (note.pinned) FontWeight.SemiBold else FontWeight.Normal,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                listOf(
+                                    note.date.format(shortDateFormatter),
+                                    if (note.pinned) "Pinned" else null,
+                                    note.tags.firstOrNull()
+                                ).filterNotNull().distinct().joinToString(" • "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+            OutlinedButton(onClick = onOpenNotes, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (visibleNotes.isEmpty()) "Add work note" else "View all notes")
             }
         }
     }
@@ -3253,7 +3312,7 @@ private fun speechErrorMessage(error: Int): String = when (error) {
     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer is busy. Try again."
     SpeechRecognizer.ERROR_SERVER -> "Speech service failed. The transcript was not saved; type it instead."
     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected."
-    else -> "Speech recognition failed with code $error."
+    else -> "Speech recognition failed. Retry or type the note."
 }
 
 private fun WorkShift.timeUntilShift(now: LocalDateTime): String {
@@ -4191,6 +4250,8 @@ private fun DailyNotesSection(
         recognizer.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak your ${voiceType.label.lowercase()}")
         })
     }
@@ -4211,12 +4272,18 @@ private fun DailyNotesSection(
 
             override fun onError(error: Int) {
                 listening = false
+                if (liveVoiceText.isNotBlank() && error in setOf(SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT, SpeechRecognizer.ERROR_CLIENT)) {
+                    applyVoiceTranscript(liveVoiceText)
+                    voiceError = null
+                    return
+                }
                 voiceError = speechErrorMessage(error)
             }
 
             override fun onResults(results: Bundle?) {
                 listening = false
                 val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                    .ifBlank { liveVoiceText }
                 liveVoiceText = text
                 applyVoiceTranscript(text)
             }
@@ -4314,7 +4381,7 @@ private fun DailyNotesSection(
                     Button(onClick = { startVoiceCapture() }, modifier = Modifier.weight(1f)) {
                         Icon(Icons.Default.Mic, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Capture voice")
+                        Text("Capture work note")
                     }
                 }
                 OutlinedButton(
@@ -4347,6 +4414,11 @@ private fun DailyNotesSection(
                 }
             }
             if (rawVoiceTranscript.isNotBlank()) {
+                AssistChip(
+                    onClick = {},
+                    label = { Text("Captured as ${voiceType.label}; review before saving") },
+                    leadingIcon = { Icon(Icons.Default.Mic, contentDescription = null) }
+                )
                 OutlinedTextField(
                     value = rawVoiceTranscript,
                     onValueChange = { rawVoiceTranscript = it },
