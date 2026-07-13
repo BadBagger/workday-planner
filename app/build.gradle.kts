@@ -17,7 +17,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.workdayplanner"
+        applicationId = "com.smithware.workdayplanner"
         minSdk = 26
         targetSdk = 36
         versionCode = 66

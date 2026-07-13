@@ -77,7 +77,7 @@ class WidgetRefreshReceiver : BroadcastReceiver() {
 }
 
 object PlannerWidgetUpdater {
-    private const val ACTION_REFRESH_WIDGETS = "com.example.workdayplanner.widget.REFRESH_WIDGETS"
+    private const val ACTION_REFRESH_WIDGETS = "com.smithware.workdayplanner.widget.REFRESH_WIDGETS"
     private const val MIDNIGHT_REFRESH_REQUEST = 7301
 
     fun updateAll(context: Context) {

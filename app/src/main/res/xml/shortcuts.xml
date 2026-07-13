@@ -7,8 +7,8 @@
         android:shortcutShortLabel="@string/shortcut_voice_task_short"
         android:shortcutLongLabel="@string/shortcut_voice_task_long">
         <intent
-            android:action="com.example.workdayplanner.action.VOICE_TASK"
-            android:targetPackage="com.example.workdayplanner"
+            android:action="com.smithware.workdayplanner.action.VOICE_TASK"
+            android:targetPackage="com.smithware.workdayplanner"
             android:targetClass="com.example.workdayplanner.MainActivity" />
         <categories android:name="android.shortcut.conversation" />
     </shortcut>

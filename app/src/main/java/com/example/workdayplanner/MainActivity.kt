@@ -77,6 +77,6 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_OPEN_TASK_ID = "open_task_id"
-        const val ACTION_VOICE_TASK = "com.example.workdayplanner.action.VOICE_TASK"
+        const val ACTION_VOICE_TASK = "com.smithware.workdayplanner.action.VOICE_TASK"
     }
 }
