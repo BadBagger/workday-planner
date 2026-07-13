@@ -75,7 +75,7 @@ object ScheduleTextParser {
         var pendingDayRest: String? = null
         var currentDate: LocalDate? = null
 
-        lines.forEach { originalLine ->
+        lines.forEachIndexed { index, originalLine ->
             val line = normalizeOcrLine(originalLine)
             val dayHeader = dayHeaderRegex.matchEntire(line)
             val directDate = if (dayHeader == null) dateRegex.find(line)?.let { parseDate(it, currentYear) } else null
@@ -84,11 +84,11 @@ object ScheduleTextParser {
                 if (offRegex.containsMatchIn(line)) {
                     daysOff += directDate
                     dayOffTypes[directDate] = dayOffKind(line)
-                    return@forEach
+                    return@forEachIndexed
                 }
                 parseShift(line, directDate, roleAndStoreNear(lines, originalLine))?.let {
                     shifts += it
-                    return@forEach
+                    return@forEachIndexed
                 }
             }
 
@@ -96,7 +96,11 @@ object ScheduleTextParser {
                 pendingDayName = dayHeader.groupValues[1]
                 var dayNumber = dayHeader.groupValues[2].toIntOrNull()
                 val rawRest = dayHeader.groupValues[3].trim()
-                var rest = if (dayNumber != null && rawRest.startsWithPeriod()) "$dayNumber $rawRest" else rawRest
+                val dayNumberIsActuallyShiftHour = dayNumber != null && rawRest.startsWithPeriod()
+                var rest = if (dayNumberIsActuallyShiftHour) "$dayNumber $rawRest" else rawRest
+                if (dayNumberIsActuallyShiftHour) {
+                    dayNumber = null
+                }
                 val splitHour = splitTwoDigitHourRegex.matchEntire(rawRest)
                 if (dayNumber == 1 && splitHour != null) {
                     rest = "1${splitHour.groupValues[1]} ${splitHour.groupValues[2]}"
@@ -116,15 +120,18 @@ object ScheduleTextParser {
                         daysOff += matchedDate
                         dayOffTypes[matchedDate] = dayOffKind(rest)
                         pendingDayRest = null
-                        return@forEach
+                        return@forEachIndexed
+                    }
+                    if (dayNumber == null && shouldWaitForFollowingRoleDate(lines, index, rest)) {
+                        return@forEachIndexed
                     }
                     parseShift(rest, matchedDate, roleAndStoreNear(lines, originalLine))?.let {
                         shifts += it
                         pendingDayRest = null
-                        return@forEach
+                        return@forEachIndexed
                     }
                 }
-                return@forEach
+                return@forEachIndexed
             }
 
             if (pendingDayName != null && dayNumberRegex.matches(line) && baseDate != null) {
@@ -136,7 +143,7 @@ object ScheduleTextParser {
                     }
                 }
                 pendingDayName = null
-                return@forEach
+                return@forEachIndexed
             }
 
             val leadingDayNumber = leadingDayNumberRegex.matchEntire(line)?.groupValues?.get(1)?.toIntOrNull()
@@ -146,7 +153,7 @@ object ScheduleTextParser {
                     shifts += it
                     pendingDayRest = null
                     pendingDayName = null
-                    return@forEach
+                    return@forEachIndexed
                 }
             }
 
@@ -154,13 +161,13 @@ object ScheduleTextParser {
             if (activeDate != null && offRegex.containsMatchIn(line)) {
                 daysOff += activeDate
                 dayOffTypes[activeDate] = dayOffKind(line)
-                return@forEach
+                return@forEachIndexed
             }
 
             if (activeDate != null) {
                 parseShift(line, activeDate, roleAndStoreNear(lines, originalLine))?.let {
                     shifts += it
-                    return@forEach
+                    return@forEachIndexed
                 }
             }
 
@@ -214,6 +221,18 @@ object ScheduleTextParser {
             unparsedLines = unparsed,
             dayOffTypes = dayOffTypes
         )
+    }
+
+    private fun shouldWaitForFollowingRoleDate(lines: List<String>, index: Int, rest: String): Boolean {
+        if (!timeRangeRegex.containsMatchIn(rest)) return false
+        val nextMeaningfulLine = lines.drop(index + 1)
+            .map(::normalizeOcrLine)
+            .firstOrNull { !isNoise(it) }
+            ?: return false
+        // Some schedules put the real calendar day on the role row:
+        // "Sat 2 PM - 10:30 PM" followed by "18 Deli Clerk".
+        // In that case the leading 18 should date the shift, not the 2 PM hour.
+        return roleLineRegex.matches(nextMeaningfulLine) && !offRegex.containsMatchIn(nextMeaningfulLine)
     }
 
     private fun extractDayCardDates(lines: List<String>, baseDate: LocalDate): List<LocalDate> {
@@ -278,7 +297,13 @@ object ScheduleTextParser {
             val dayHeader = dayHeaderRegex.matchEntire(normalizeOcrLine(line))
             if (dayHeader != null) {
                 val dayName = dayHeader.groupValues[1]
-                val inlineDayNumber = dayHeader.groupValues[2].toIntOrNull()
+                val rawRest = dayHeader.groupValues[3].trim()
+                val inlineDayNumber = dayHeader.groupValues[2]
+                    .toIntOrNull()
+                    ?.takeUnless {
+                        rawRest.startsWithPeriod() ||
+                            (it == 1 && splitTwoDigitHourRegex.matchEntire(rawRest) != null)
+                    }
                 if (inlineDayNumber != null) {
                     pairs += dayName to inlineDayNumber
                     pendingDayName = null

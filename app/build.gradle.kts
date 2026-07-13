@@ -20,8 +20,8 @@ android {
         applicationId = "com.smithware.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 66
-        versionName = "2.46-voice-parser-hotfix"
+        versionCode = 67
+        versionName = "2.47-import-parser-hotfix"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

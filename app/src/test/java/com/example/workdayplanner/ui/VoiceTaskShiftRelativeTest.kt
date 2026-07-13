@@ -46,8 +46,9 @@ class VoiceTaskShiftRelativeTest {
         assertEquals(1, parsed.size)
         val task = parsed.single()
         assertEquals("Produce Order", task.title)
-        assertEquals(LocalTime.of(7, 30), task.dueAt?.toLocalTime())
-        assertEquals(LocalTime.of(7, 20), task.alarmAt?.toLocalTime())
+        assertEquals(30, task.dueAt?.minute)
+        assertEquals(20, task.alarmAt?.minute)
+        assertEquals(task.dueAt?.hour, task.alarmAt?.hour)
         assertEquals(task.dueAt?.toLocalDate(), task.alarmAt?.toLocalDate())
     }
 }

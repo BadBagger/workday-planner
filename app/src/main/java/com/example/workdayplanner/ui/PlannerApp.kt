@@ -2990,10 +2990,19 @@ internal fun applyShiftRelativeVoiceTerms(transcript: String, state: AppState): 
         "before lunch" in lower -> start.plusHours(4)
         else -> null
     } ?: return transcript
-    return transcript
+    val rewritten = transcript
         .replace(Regex("one hour before closing", RegexOption.IGNORE_CASE), "at ${replacementTime.format(timeFormatter)}")
         .replace(Regex("halfway through my shift", RegexOption.IGNORE_CASE), "at ${replacementTime.format(timeFormatter)}")
         .replace(Regex("at the start of my shift|before my shift|after work|after my shift|after shift|at closing|before closing|after lunch|before lunch", RegexOption.IGNORE_CASE), "at ${replacementTime.format(timeFormatter)}")
+    return if (targetDate != null) {
+        rewritten.replace(
+            Regex("\\b(next\\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\\b", RegexOption.IGNORE_CASE)
+        ) { match ->
+            if (match.groupValues[1].isNotBlank()) match.value else "next ${match.groupValues[2]}"
+        }
+    } else {
+        rewritten
+    }
 }
 
 internal fun spokenDateForShiftRelativePhrase(lower: String, today: LocalDate = LocalDate.now()): LocalDate? {
