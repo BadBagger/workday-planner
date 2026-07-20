@@ -1,0 +1,20 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      "personal" flavor only: never merged into the "public" flavor that
+      ships to Play Store / other users. Grants LifeOS (Kyle's own signed
+      build, same keystore) read-only access to a workday-summary provider.
+      Other Workday Planner users never build or install this flavor and
+      never get this provider, this permission, or its manifest entry.
+    -->
+    <permission
+        android:name="com.smithware.workdayplanner.permission.READ_SUMMARY"
+        android:protectionLevel="signature" />
+
+    <application>
+        <provider
+            android:name=".WorkdayPlannerSummaryProvider"
+            android:authorities="com.smithware.workdayplanner.summary"
+            android:exported="true"
+            android:readPermission="com.smithware.workdayplanner.permission.READ_SUMMARY" />
+    </application>
+</manifest>

@@ -20,10 +20,26 @@ android {
         applicationId = "com.smithware.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 68
-        versionName = "2.48-voice-notes-home"
+        versionCode = 69
+        versionName = "2.49-play-beta-import-hotfix"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // "public" is what ships to Play Store / other Workday Planner users --
+    // it never compiles in the LifeOS summary provider (see
+    // app/src/personal/). "personal" is Kyle's own device-only build, signed
+    // with the same keystore as LifeOS, with a distinct app ID suffix so it
+    // can never collide with or be mistaken for the Play Store package.
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("public") {
+            dimension = "distribution"
+        }
+        create("personal") {
+            dimension = "distribution"
+            applicationIdSuffix = ".personal"
+        }
     }
 
     signingConfigs {
