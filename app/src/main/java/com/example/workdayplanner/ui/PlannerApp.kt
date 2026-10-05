@@ -4673,14 +4673,57 @@ private fun ChecklistTemplateSection(onAddChecklist: (String) -> Unit) {
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionHeader("Checklist templates", "Add a work routine to today's tasks.")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                WorkChecklistTemplates.all.forEach { template ->
-                    OutlinedButton(onClick = { onAddChecklist(template.id) }) {
-                        Text(template.title)
-                    }
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Checklist templates", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Drop a full routine into today without rebuilding it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+                AssistChip(onClick = {}, label = { Text("${WorkChecklistTemplates.all.size}") })
+            }
+            WorkChecklistTemplates.all.forEach { template ->
+                ChecklistTemplateRow(template = template, onAddChecklist = onAddChecklist)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChecklistTemplateRow(
+    template: WorkChecklistTemplate,
+    onAddChecklist: (String) -> Unit
+) {
+    val categoryColor = template.category.categoryColor()
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .width(4.dp)
+                    .height(42.dp)
+                    .background(categoryColor)
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(template.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "${template.items.size} tasks • ${template.category.label}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Button(onClick = { onAddChecklist(template.id) }) {
+                Text("Add")
             }
         }
     }
