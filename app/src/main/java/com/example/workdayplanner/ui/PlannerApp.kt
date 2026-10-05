@@ -3003,21 +3003,38 @@ private fun TodayWorkTasksCard(
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionHeader("Today’s work tasks", "Work items due during this shift day.")
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Today’s work tasks", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (tasks.isEmpty()) "Nothing due in this shift window." else "${tasks.size} open item${if (tasks.size == 1) "" else "s"} due today",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                AssistChip(onClick = {}, label = { Text(tasks.size.toString()) })
+            }
             val visible = tasks.take(3)
             if (visible.isEmpty()) {
-                Text(
-                    if (hasSchedule) "No tasks due today. Add a checklist or one-off reminder when needed." else "No tasks due today.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (hasSchedule) "Add a checklist when the shift has a routine, or a one-off task when something changes." else "Import or add a shift, then attach tasks to the day.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
             } else {
                 visible.forEach { task ->
-                    Text(task.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    DashboardTaskRow(task)
                 }
                 if (tasks.size > visible.size) {
                     Text("+${tasks.size - visible.size} more", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -3025,12 +3042,45 @@ private fun TodayWorkTasksCard(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(onClick = onAddFromTemplate, modifier = Modifier.weight(1f)) {
-                    Text("Add from template")
+                    Text("Checklist")
                 }
                 Button(onClick = onAddTask, modifier = Modifier.weight(1f)) {
                     Text("New task")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DashboardTaskRow(task: TaskItem) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f))
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            Modifier
+                .width(4.dp)
+                .height(34.dp)
+                .background(task.priority.priorityColor())
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(task.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                buildList {
+                    task.deadline?.let { add(it.format(timeFormatter)) }
+                    if (task.category != TaskCategory.General) add(task.category.label)
+                    if (task.priority != TaskPriority.Normal) add(task.priority.label)
+                }.joinToString(" • ").ifBlank { "No extra details" },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
