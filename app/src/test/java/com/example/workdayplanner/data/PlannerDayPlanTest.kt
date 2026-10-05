@@ -17,8 +17,6 @@ class PlannerDayPlanTest {
                     id = "all-day",
                     title = "Renew passport",
                     deadline = day.atTime(23, 59),
-                    todoistRecurring = true,
-                    todoistDueString = "every 2 weeks",
                     repeatRule = RepeatRule.None
                 ),
                 TaskItem(
@@ -52,6 +50,6 @@ class PlannerDayPlanTest {
         assertEquals(LocalTime.of(16, 30), items[1].end)
         assertEquals(PlannerDayKind.Event, items[1].kind)
         assertNull(items[2].start)
-        assertEquals("every 2 weeks", items[2].repeats)
+        assertNull(items[2].repeats)
     }
 }

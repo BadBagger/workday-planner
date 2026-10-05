@@ -87,7 +87,7 @@ object ScheduleTextParser {
                     return@forEachIndexed
                 }
                 parseShift(line, directDate, roleAndStoreNear(lines, originalLine))?.let {
-                    shifts += it
+                    shifts.recordShift(it, line, lines.getOrNull(index + 1))
                     return@forEachIndexed
                 }
             }
@@ -126,7 +126,7 @@ object ScheduleTextParser {
                         return@forEachIndexed
                     }
                     parseShift(rest, matchedDate, roleAndStoreNear(lines, originalLine))?.let {
-                        shifts += it
+                        shifts.recordShift(it, rest, lines.getOrNull(index + 1))
                         pendingDayRest = null
                         return@forEachIndexed
                     }
@@ -138,7 +138,7 @@ object ScheduleTextParser {
                 currentDate = dateNearBase(line.toInt(), baseDate)
                 pendingDayRest?.let { rest ->
                     parseShift(rest, currentDate!!, roleAndStoreNear(lines, originalLine))?.let {
-                        shifts += it
+                        shifts.recordShift(it, rest, lines.getOrNull(index + 1))
                         pendingDayRest = null
                     }
                 }
@@ -150,7 +150,7 @@ object ScheduleTextParser {
             if (pendingDayName != null && pendingDayRest != null && leadingDayNumber != null && baseDate != null) {
                 currentDate = dateNearBase(leadingDayNumber, baseDate)
                 parseShift(pendingDayRest!!, currentDate!!, roleAndStoreNear(lines, originalLine))?.let {
-                    shifts += it
+                    shifts.recordShift(it, pendingDayRest!!, lines.getOrNull(index + 1))
                     pendingDayRest = null
                     pendingDayName = null
                     return@forEachIndexed
@@ -166,7 +166,7 @@ object ScheduleTextParser {
 
             if (activeDate != null) {
                 parseShift(line, activeDate, roleAndStoreNear(lines, originalLine))?.let {
-                    shifts += it
+                    shifts.recordShift(it, line, lines.getOrNull(index + 1))
                     return@forEachIndexed
                 }
             }
@@ -191,25 +191,34 @@ object ScheduleTextParser {
         var eventIndex = 0
         var lastEvent: String? = null
 
-        lines.map(::normalizeOcrLine).forEach { line ->
-            if (isNoise(line) || dateRegex.containsMatchIn(line) || dayHeaderRegex.matches(line)) return@forEach
+        val normalized = lines.map(::normalizeOcrLine)
+        normalized.forEachIndexed { index, line ->
+            if (isNoise(line) || dateRegex.containsMatchIn(line) || dayHeaderRegex.matches(line)) return@forEachIndexed
             val eventKey = when {
                 offRegex.containsMatchIn(line) -> "off"
+                timeRangeRegex.containsMatchIn(line) && isMealLine(line, normalized.getOrNull(index + 1)) -> {
+                    val date = knownDates.getOrNull(eventIndex.coerceAtLeast(1) - 1)
+                    val meal = parseShift(line, date ?: baseDate)
+                    if (date != null && meal != null) shifts.recordShift(meal, line, normalized.getOrNull(index + 1))
+                    return@forEachIndexed
+                }
                 timeRangeRegex.containsMatchIn(line) -> line
                 else -> null
             }
             if (eventKey == null) {
                 if (!isLikelyJobDetail(line)) unparsed += line
-                return@forEach
+                return@forEachIndexed
             }
-            if (eventKey == lastEvent) return@forEach
+            if (eventKey == lastEvent) return@forEachIndexed
 
             val date = knownDates.getOrNull(eventIndex) ?: baseDate.plusDays(eventIndex.toLong())
             if (eventKey == "off") {
                 daysOff += date
                 dayOffTypes[date] = dayOffKind(line)
             } else {
-                parseShift(line, date, roleAndStoreNear(lines, line))?.let { shifts += it }
+                parseShift(line, date, roleAndStoreNear(lines, line))?.let {
+                    shifts.recordShift(it, line, normalized.getOrNull(index + 1))
+                }
             }
             lastEvent = eventKey
             eventIndex += 1
@@ -560,5 +569,35 @@ object ScheduleTextParser {
             !offRegex.containsMatchIn(line) &&
             !timeRangeRegex.containsMatchIn(line) &&
             (line.contains("Clerk", ignoreCase = true) || line.contains("Manager", ignoreCase = true))
+    }
+
+    private fun MutableList<WorkShift>.recordShift(shift: WorkShift, line: String, followingRaw: String?) {
+        val following = followingRaw?.let(::normalizeOcrLine)
+        if (isMealLine(line, following)) {
+            val parent = indexOfLast { it.date == shift.date }
+            if (parent >= 0) {
+                val existing = this[parent]
+                val meal = "Meal ${shift.start.toClockLabel()}–${shift.end.toClockLabel()}"
+                if (!existing.notes.contains("Meal ", ignoreCase = true)) {
+                    this[parent] = existing.copy(
+                        notes = listOf(existing.notes, meal).filter { it.isNotBlank() }.joinToString(" ")
+                    )
+                }
+            }
+            return
+        }
+        add(shift)
+    }
+
+    private fun isMealLine(line: String, following: String?): Boolean {
+        if (line.contains("meal", ignoreCase = true)) return true
+        return following.equals("Meal", ignoreCase = true)
+    }
+
+    private fun LocalTime.toClockLabel(): String {
+        val hour = if (hour % 12 == 0) 12 else hour % 12
+        val suffix = if (this.hour < 12) "a.m." else "p.m."
+        val minute = if (minute == 0) "" else ":%02d".format(minute)
+        return "$hour$minute $suffix"
     }
 }

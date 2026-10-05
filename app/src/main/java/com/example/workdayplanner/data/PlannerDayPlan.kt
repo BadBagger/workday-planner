@@ -34,7 +34,7 @@ object PlannerDayPlan {
         if (completed) return null
         val deadline = deadline ?: return null
         if (deadline.toLocalDate() != date) return null
-        val allDay = TodoistSync.isAllDay(deadline.toLocalTime())
+        val allDay = deadline.hour == 23 && deadline.minute >= 59
         val end = if (!allDay && durationMinutes != null && durationMinutes > 0) {
             deadline.toLocalTime().plusMinutes(durationMinutes.toLong())
         } else {
@@ -51,23 +51,45 @@ object PlannerDayPlan {
     }
 
     private fun WorkEvent.toDayItem(date: LocalDate): PlannerDayItem? {
-        val dayStart = date.atStartOfDay()
-        val dayEnd = date.plusDays(1).atStartOfDay()
-        if (!startsAt.isBefore(dayEnd) || !endsAt.isAfter(dayStart)) return null
+        if (!occursOn(date)) return null
         return PlannerDayItem(
             id = id,
             title = title,
             kind = PlannerDayKind.Event,
             start = startsAt.toLocalTime(),
             end = endsAt.toLocalTime(),
-            repeats = null
+            repeats = repeatText()
         )
     }
 
-    private fun TaskItem.repeatText(): String? {
-        if (repeatRule == RepeatRule.None) {
-            return todoistDueString?.takeIf { todoistRecurring && it.isNotBlank() }
+    private fun WorkEvent.occursOn(date: LocalDate): Boolean {
+        val startDate = startsAt.toLocalDate()
+        if (date.isBefore(startDate)) return false
+        return when (repeatRule) {
+            RepeatRule.None -> {
+                val dayStart = date.atStartOfDay()
+                val dayEnd = date.plusDays(1).atStartOfDay()
+                startsAt.isBefore(dayEnd) && endsAt.isAfter(dayStart)
+            }
+            RepeatRule.Daily -> true
+            RepeatRule.Weekdays, RepeatRule.EveryWorkday -> date.dayOfWeek.value <= 5
+            RepeatRule.Weekly -> date.dayOfWeek == startDate.dayOfWeek
+            RepeatRule.CustomDays -> date.dayOfWeek in repeatDays
+            else -> date == startDate
         }
+    }
+
+    private fun WorkEvent.repeatText(): String? = when (repeatRule) {
+        RepeatRule.None -> null
+        RepeatRule.Daily -> "Daily"
+        RepeatRule.Weekdays -> "Weekdays"
+        RepeatRule.EveryWorkday -> "Every workday"
+        RepeatRule.Weekly -> "Weekly"
+        RepeatRule.CustomDays -> repeatDays.sortedBy(DayOfWeek::getValue).joinToString(", ") { it.display() }
+        else -> null
+    }
+
+    private fun TaskItem.repeatText(): String? {
         return when (repeatRule) {
             RepeatRule.Daily -> "Daily"
             RepeatRule.Weekdays -> "Weekdays"

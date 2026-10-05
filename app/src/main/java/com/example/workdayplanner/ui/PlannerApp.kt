@@ -143,7 +143,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.example.workdayplanner.BuildConfig
 import com.example.workdayplanner.PlannerViewModel
-import com.example.workdayplanner.TodoistSyncUiState
 import com.example.workdayplanner.TrainingImportUiState
 import com.example.workdayplanner.alarm.AlarmScheduler
 import com.example.workdayplanner.calendar.DeviceCalendar
@@ -321,8 +320,6 @@ fun PlannerApp(
     val calendarMessage by viewModel.calendarMessage.collectAsStateWithLifecycle()
     val imageMessage by viewModel.imageMessage.collectAsStateWithLifecycle()
     val trainingImportState by viewModel.trainingImportState.collectAsStateWithLifecycle()
-    val todoistSync by viewModel.todoistSync.collectAsStateWithLifecycle()
-    val todoistAuthRequest by viewModel.todoistAuthRequest.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
     val topLevel = listOf(Screen.Tasks, Screen.WorkTasks, Screen.Notes, Screen.Schedule, Screen.Manager, Screen.Settings)
@@ -345,17 +342,6 @@ fun PlannerApp(
             navController.navigate(Screen.Import.route) {
                 launchSingleTop = true
             }
-        }
-    }
-
-    LaunchedEffect(todoistAuthRequest) {
-        val request = todoistAuthRequest ?: return@LaunchedEffect
-        val opened = runCatching {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(request)))
-        }
-        viewModel.consumeTodoistAuthRequest()
-        if (opened.isFailure) {
-            viewModel.reportTodoistError("Couldn't open the browser. Paste a Todoist API token instead.")
         }
     }
 
@@ -519,12 +505,7 @@ fun PlannerApp(
                     onAddChecklist = viewModel::addChecklistTemplate,
                     onSaveVoiceTask = viewModel::saveTask,
                     onDismissImportMessage = viewModel::dismissImportMessage,
-                    onOpenPremium = ::openPremium,
-                    todoistSync = todoistSync,
-                    onRefreshTodoist = viewModel::refreshTodoist,
-                    onOpenSettings = {
-                        navController.navigate(Screen.Settings.route) { launchSingleTop = true }
-                    }
+                    onOpenPremium = ::openPremium
                 )
             }
             composable(Screen.Notes.route) {
@@ -634,12 +615,7 @@ fun PlannerApp(
                         onSyncCalendar = viewModel::syncShiftsToCalendar,
                         onNotificationPermissionNeeded = onNotificationPermissionNeeded,
                         onTesterModeChanged = viewModel::setMockPremium,
-                        onOpenPremium = ::openPremium,
-                        todoistSync = todoistSync,
-                        onConnectTodoist = viewModel::startTodoistOAuth,
-                        onConnectTodoistToken = viewModel::connectTodoistWithToken,
-                        onRefreshTodoist = viewModel::refreshTodoist,
-                        onDisconnectTodoist = viewModel::disconnectTodoist
+                        onOpenPremium = ::openPremium
                     )
                 }
             }
@@ -1080,10 +1056,7 @@ private fun TaskListScreen(
     onAddChecklist: (String) -> Unit,
     onSaveVoiceTask: (TaskItem) -> TaskItem,
     onDismissImportMessage: () -> Unit,
-    onOpenPremium: () -> Unit,
-    todoistSync: TodoistSyncUiState? = null,
-    onRefreshTodoist: () -> Unit = {},
-    onOpenSettings: () -> Unit = {}
+    onOpenPremium: () -> Unit
 ) {
     val today = LocalDate.now()
     val now = LocalDateTime.now()
@@ -1188,13 +1161,7 @@ private fun TaskListScreen(
                 onAddTask = onAddTask,
                 onAddRepeatingTask = onAddRepeatingTask
             )
-            if (todoistSync != null) {
-                TodoistTasksBanner(
-                    status = todoistSync,
-                    onRefresh = onRefreshTodoist,
-                    onOpenSettings = onOpenSettings
-                )
-            }
+            DeliStandardsSection(book = state.deliStandards, today = today)
             ChecklistTemplateSection(onAddChecklist = onAddChecklist)
             EmptyState("No work to-dos yet", "Add one-off tasks or build repeating work tasks here. Today stays focused on your shift.")
         }
@@ -1233,12 +1200,8 @@ private fun TaskListScreen(
                 onAddRepeatingTask = onAddRepeatingTask
             )
         }
-        if (!showDashboardHeader && todoistSync != null) item {
-            TodoistTasksBanner(
-                status = todoistSync,
-                onRefresh = onRefreshTodoist,
-                onOpenSettings = onOpenSettings
-            )
+        if (!showDashboardHeader) item {
+            DeliStandardsSection(book = state.deliStandards, today = today)
         }
         item {
             TaskFocusCard(
@@ -5066,10 +5029,6 @@ private fun TaskCard(
                         )
                     }
                     if (task.repeatRule != RepeatRule.None) AssistChip(onClick = {}, label = { Text(task.repeatLabel()) })
-                    if (task.todoistRecurring && task.repeatRule == RepeatRule.None && task.todoistDueString.isNullOrBlank().not()) {
-                        AssistChip(onClick = {}, label = { Text(task.todoistDueString.orEmpty()) })
-                    }
-                    if (task.todoistId != null) AssistChip(onClick = {}, label = { Text("Todoist") })
                     scheduleInsight.labels.forEach { label ->
                         val color = label.scheduleLabelColor()
                         AssistChip(
@@ -5206,13 +5165,8 @@ private fun TaskDetailScreen(
             createdAt = task?.createdAt ?: LocalDateTime.now(),
             completed = completed,
             completionHistory = task?.completionHistory.orEmpty(),
-            todoistId = task?.todoistId,
-            todoistProjectId = task?.todoistProjectId,
-            todoistDueString = task?.todoistDueString,
-            todoistRecurring = task?.todoistRecurring ?: false,
-            todoistUpdatedAt = task?.todoistUpdatedAt,
             durationMinutes = task?.durationMinutes,
-            todoistPending = task?.todoistPending ?: com.example.workdayplanner.data.TodoistPendingAction.None
+            goalId = task?.goalId
         )
     }
     fun requestReminderPermissionIfNeeded() {
@@ -5900,8 +5854,8 @@ private fun EventDetailScreen(event: WorkEvent?, onSave: (WorkEvent) -> Unit, on
                             location = location.trim(),
                             startsAt = startsAt,
                             endsAt = endsAt,
-                            todoistId = event?.todoistId,
-                            todoistPending = event?.todoistPending ?: com.example.workdayplanner.data.TodoistPendingAction.None
+                            repeatRule = event?.repeatRule ?: RepeatRule.None,
+                            repeatDays = event?.repeatDays ?: emptySet()
                         )
                     )
                 }
@@ -6734,6 +6688,7 @@ private fun ScheduleScreen(
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         ScheduleOverviewCard(state = state)
+        DeliStandardsSection(book = state.deliStandards, today = LocalDate.now())
         ScheduleQuickActions(
             showAddShift = showAddShift,
             onToggleAddShift = { showAddShift = !showAddShift },
@@ -7452,110 +7407,6 @@ private fun ScheduleEmptyState(onImportSchedule: () -> Unit, onAddShift: () -> U
 }
 
 @Composable
-private fun TodoistTasksBanner(
-    status: TodoistSyncUiState,
-    onRefresh: () -> Unit,
-    onOpenSettings: () -> Unit
-) {
-    val detail = when {
-        status.syncing -> "Syncing with Todoist…"
-        !status.errorMessage.isNullOrBlank() -> status.errorMessage
-        !status.connected -> "Connect Todoist in Settings to keep these to-dos in sync."
-        status.lastSyncedAt != null -> "Todoist synced ${status.lastSyncedAt.format(timeFormatter)}. ${status.statusMessage.orEmpty()}"
-        else -> status.statusMessage ?: "Connected to Todoist."
-    }
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Todoist", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                if (status.connected) {
-                    OutlinedButton(onClick = onRefresh, enabled = !status.syncing, modifier = Modifier.weight(1f)) {
-                        Text(if (status.syncing) "Syncing" else "Refresh")
-                    }
-                }
-                OutlinedButton(onClick = onOpenSettings, modifier = Modifier.weight(1f)) {
-                    Text(if (status.connected) "Connection" else "Connect")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TodoistSettingsCard(
-    status: TodoistSyncUiState,
-    onConnect: () -> Unit,
-    onConnectToken: (String) -> Unit,
-    onRefresh: () -> Unit,
-    onDisconnect: () -> Unit
-) {
-    var token by remember { mutableStateOf("") }
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionHeader(
-                "Todoist",
-                "Plan to-dos here and keep them synced with every project in your Todoist account."
-            )
-            Text(
-                "Connect with Todoist in the browser, or paste the API token from Todoist Settings → Integrations → Developer. The token stays on this phone. Nothing is built into the app.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            val detail = when {
-                status.syncing -> "Working with Todoist…"
-                !status.errorMessage.isNullOrBlank() -> status.errorMessage
-                status.connected && status.lastSyncedAt != null -> "Connected. Last sync ${status.lastSyncedAt.format(dateTimeFormatter)}."
-                status.connected -> "Connected."
-                else -> "Not connected."
-            }
-            Text(detail, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            status.statusMessage?.takeIf { status.errorMessage.isNullOrBlank() }?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Button(onClick = onConnect, enabled = !status.syncing, modifier = Modifier.fillMaxWidth()) {
-                Text("Connect with Todoist")
-            }
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                label = { Text("API token") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = {
-                        onConnectToken(token)
-                        token = ""
-                    },
-                    enabled = token.isNotBlank() && !status.syncing,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Save token") }
-                if (status.connected) {
-                    OutlinedButton(onClick = onRefresh, enabled = !status.syncing, modifier = Modifier.weight(1f)) {
-                        Text("Refresh")
-                    }
-                }
-            }
-            if (status.connected) {
-                TextButton(onClick = onDisconnect) { Text("Disconnect") }
-            }
-        }
-    }
-}
-
-@Composable
 private fun SettingsScreen(
     state: AppState,
     onAppearanceModeChanged: (AppearanceMode) -> Unit,
@@ -7571,24 +7422,12 @@ private fun SettingsScreen(
     onSyncCalendar: () -> Unit,
     onNotificationPermissionNeeded: () -> Unit,
     onTesterModeChanged: (Boolean) -> Unit,
-    onOpenPremium: () -> Unit,
-    todoistSync: TodoistSyncUiState,
-    onConnectTodoist: () -> Unit,
-    onConnectTodoistToken: (String) -> Unit,
-    onRefreshTodoist: () -> Unit,
-    onDisconnectTodoist: () -> Unit
+        onOpenPremium: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
-        TodoistSettingsCard(
-            status = todoistSync,
-            onConnect = onConnectTodoist,
-            onConnectToken = onConnectTodoistToken,
-            onRefresh = onRefreshTodoist,
-            onDisconnect = onDisconnectTodoist
-        )
         StyleSection(
             state = state,
             onAppearanceModeChanged = onAppearanceModeChanged,

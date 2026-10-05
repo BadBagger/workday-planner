@@ -13,18 +13,21 @@ Native Android work planner built with Kotlin, Jetpack Compose, local storage, n
 - Local-only storage with `SharedPreferences`
 - Compose Navigation across Today, Notes, Schedule, Manager, Settings, Import, and task detail screens
 - Full task/shift alarm support with local app alarms and system Clock handoff where available
-- Live Todoist sync for to-dos, repeating tasks, and dated plans
+- To Do pushes tasks, events, schedules, goals, files, and the Deli Daily Standards sheet into the planner
 
-## Todoist
+## To Do
 
-Workday Planner can keep the To-do tab in sync with the Todoist account you connect. Sync covers every project on that account, and it refreshes when you open the app and about every three minutes while the app is open. New tasks and completions made in the app are written back. Dated tasks and events also show on the Schedule tab.
+Workday Planner keeps the plan. Todoist is not used. The companion assistant To Do, signed with the same key as this app, writes straight into:
 
-Connect from **Settings → Todoist**:
+`content://com.smithware.workdayplanner.todo/items`
 
-1. **Connect with Todoist** opens Todoist in the browser and asks you to allow access. No client secret is stored in the app. The sign-in uses a public OAuth client registered on your phone, with PKCE.
-2. Or paste an API token from Todoist: **Settings → Integrations → Developer**. The token stays on this phone.
+A personal build uses `content://com.smithware.workdayplanner.personal.todo/items`.
 
-Shift-only repeats (opening, closing, truck, and inventory) stay in Workday Planner because Todoist has no matching rule. Daily, weekday, weekly, and custom-day repeats sync.
+Each insert is a set of fields. `kind` is `task`, `todo`, `work`, `event`, `goal`, `schedule`, `file`, or `standards`. `action` is `create`, `update`, `complete`, or `delete`. The To-do list and schedule read the same saved plan, so a push shows up while the app is open.
+
+A schedule is `kind=schedule` and `text` set to the schedule wording, including a Passport screenshot once it has been read as text. Shifts and days off land on the Schedule tab. A goal is `kind=goal` with `title`, `focus`, `target`, and `daily_requirements` (one requirement per line). A file or photo is `kind=file` with `title`, `path`, and `mime`. Photos and documents can be searched from the notes images and the saved file list.
+
+Deli Daily Standards is `kind=standards`. Use `page=daily` with `date`, `line`, `done`, `owner`, `time`, `initials`, `why`, and `who` for one of the 11 objectives. Use `page=agreements` with `item` and `answer` once something has been agreed. Use `page=tracker` with `date`, `column`, and `mark` (`Y` or `N`). The sheet is on the To-do tab and the Schedule tab. Kyle does not type it in.
 
 ## Run In Android Studio
 

@@ -20,7 +20,7 @@ import com.example.workdayplanner.data.TaskRecurrence
 class TaskAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val taskId = intent.getStringExtra(EXTRA_TASK_ID).orEmpty()
-        val repository = PlannerRepository(context)
+        val repository = PlannerRepository.get(context)
         val task = repository.state.value.tasks.firstOrNull { it.id == taskId } ?: return
         if (task.completed) return
 
@@ -71,7 +71,7 @@ class TaskAlarmReceiver : BroadcastReceiver() {
 
         NotificationManagerCompat.from(context).notify(taskId.hashCode(), builder.build())
 
-        if (task.repeatRule != RepeatRule.None && task.todoistId == null) {
+        if (task.repeatRule != RepeatRule.None) {
             TaskRecurrence.nextOccurrence(task, repository.state.value)?.let { next ->
                 val alreadyExists = repository.state.value.tasks.any {
                     it.id != task.id && it.title == next.title && it.deadline == next.deadline

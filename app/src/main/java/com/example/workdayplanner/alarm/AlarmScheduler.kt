@@ -19,7 +19,6 @@ class AlarmScheduler(private val context: Context) {
 
     fun schedule(task: TaskItem): AlarmDispatchStatus {
         if (task.completed || task.reminderType == ReminderType.None) return AlarmDispatchStatus.NoAlarmRequested
-        if (task.todoistId != null && task.alarmAt == null) return AlarmDispatchStatus.NoAlarmRequested
         val alarmAt = task.alarmAt ?: task.deadline ?: return AlarmDispatchStatus.NoAlarmRequested
         var systemClockFallback = false
         if (task.alarmDelivery == AlarmDelivery.SystemClockAlarm) {

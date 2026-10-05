@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -15,11 +14,11 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <data android:scheme="https" />
-        </intent>
     </queries>
+
+    <permission
+        android:name="com.smithware.workdayplanner.permission.PUSH_PLAN"
+        android:protectionLevel="signature" />
 
     <application
         android:name=".WorkdayPlannerApp"
@@ -57,20 +56,11 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".todoist.TodoistOAuthCallbackActivity"
+        <provider
+            android:name=".todo.ToDoProvider"
+            android:authorities="${applicationId}.todo"
             android:exported="true"
-            android:launchMode="singleTask">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:host="todoist"
-                    android:path="/callback"
-                    android:scheme="workdayplanner" />
-            </intent-filter>
-        </activity>
+            android:permission="com.smithware.workdayplanner.permission.PUSH_PLAN" />
 
         <activity
             android:name=".alarm.TaskAlarmActivity"
