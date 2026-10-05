@@ -1456,19 +1456,28 @@ private fun TaskFocusCard(
     onShowDeadline: () -> Unit
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.34f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Column(Modifier.weight(1f)) {
-                    Text("Focus", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Focus queue", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text(
-                        nextTask?.focusLine().orEmpty().ifBlank { "No urgent task needs attention." },
+                        nextTask?.focusLine().orEmpty().ifBlank { "No urgent task needs attention. Keep Today clean and ready." },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
+                AssistChip(
+                    onClick = onShowDeadline,
+                    label = { Text("$todayCount today") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.68f),
+                        labelColor = MaterialTheme.colorScheme.onSurface
+                    )
+                )
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 FocusChip(
@@ -1487,12 +1496,6 @@ private fun TaskFocusCard(
                     label = "$dueSoonCount due soon",
                     color = MaterialTheme.colorScheme.warning,
                     enabled = dueSoonCount > 0,
-                    onClick = onShowDeadline
-                )
-                FocusChip(
-                    label = "$todayCount today",
-                    color = MaterialTheme.colorScheme.primary,
-                    enabled = todayCount > 0,
                     onClick = onShowDeadline
                 )
             }
@@ -1556,19 +1559,37 @@ private fun TaskViewSelector(
     counts: Map<TaskView, Int>,
     onSelected: (TaskView) -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Task view", style = MaterialTheme.typography.labelLarge)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            TaskView.entries.forEach { view ->
-                val label = "${view.label} ${counts[view] ?: 0}"
-                if (view == selected) {
-                    Button(onClick = { onSelected(view) }, modifier = Modifier.animateContentSize(animationSpec = tween(150))) {
-                        AnimatedContent(targetState = label, label = "taskViewLabel") { value -> Text(value) }
-                    }
-                } else {
-                    OutlinedButton(onClick = { onSelected(view) }, modifier = Modifier.animateContentSize(animationSpec = tween(150))) {
-                        AnimatedContent(targetState = label, label = "taskViewLabel") { value -> Text(value) }
-                    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("View tasks", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Choose the slice you can act on right now.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                AnimatedContent(
+                    targetState = counts[selected] ?: 0,
+                    label = "selectedTaskViewCount"
+                ) { count ->
+                    AssistChip(onClick = {}, label = { Text("$count items") })
+                }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                TaskView.entries.forEach { view ->
+                    val count = counts[view] ?: 0
+                    FilterChip(
+                        selected = view == selected,
+                        onClick = { onSelected(view) },
+                        label = { Text("${view.label} $count") },
+                        modifier = Modifier.animateContentSize(animationSpec = tween(150))
+                    )
                 }
             }
         }
