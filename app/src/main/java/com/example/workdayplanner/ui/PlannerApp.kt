@@ -9850,18 +9850,35 @@ private fun ImportProgressCard(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ScheduleReviewRowCard(row: ScheduleReviewRow, onChange: (ScheduleReviewRow) -> Unit, onDelete: () -> Unit) {
+    val accent = when (row.kind) {
+        ScheduleReviewKind.Shift -> MaterialTheme.colorScheme.primary
+        ScheduleReviewKind.DayOff,
+        ScheduleReviewKind.Vacation,
+        ScheduleReviewKind.Sick -> MaterialTheme.colorScheme.secondary
+        ScheduleReviewKind.Ignored -> MaterialTheme.colorScheme.error
+    }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth()
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.22f)),
+        modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .width(6.dp)
+                        .height(42.dp)
+                        .background(accent.copy(alpha = if (row.selected) 0.85f else 0.28f))
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(row.reviewTitle(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(row.reviewSubtitle(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 ConfidenceChip(row.confidence)
-                if (row.kind == ScheduleReviewKind.DayOff) AssistChip(onClick = {}, label = { Text("Day off") })
-                if (row.kind == ScheduleReviewKind.Vacation) AssistChip(onClick = {}, label = { Text("Vacation") })
-                if (row.kind == ScheduleReviewKind.Sick) AssistChip(onClick = {}, label = { Text("Sick day") })
-                if (row.kind == ScheduleReviewKind.Ignored) AssistChip(onClick = {}, label = { Text("Ignored") })
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(onClick = {}, label = { Text(row.kind.label) })
+                if (!row.selected && row.kind != ScheduleReviewKind.Ignored) AssistChip(onClick = {}, label = { Text("Not selected") })
             }
             if (row.kind != ScheduleReviewKind.Ignored) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -9949,36 +9966,49 @@ private fun ScheduleReviewRowCard(row: ScheduleReviewRow, onChange: (ScheduleRev
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (row.kind != ScheduleReviewKind.Shift) {
-                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.Shift, title = if (row.title == "Day off") "Work" else row.title, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }, modifier = Modifier.weight(1f)) {
+                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.Shift, title = if (row.title == "Day off") "Work" else row.title, selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }) {
                         Text("Shift")
                     }
                 }
                 if (row.kind != ScheduleReviewKind.DayOff) {
-                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.DayOff, title = "Day off", selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }, modifier = Modifier.weight(1f)) {
+                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.DayOff, title = "Day off", selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }) {
                         Text("Day off")
                     }
                 }
                 if (row.kind != ScheduleReviewKind.Vacation) {
-                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.Vacation, title = "Vacation", selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }, modifier = Modifier.weight(1f)) {
+                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.Vacation, title = "Vacation", selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }) {
                         Text("Vacation")
                     }
                 }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 if (row.kind != ScheduleReviewKind.Sick) {
-                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.Sick, title = "Sick day", selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }, modifier = Modifier.weight(1f)) {
+                    OutlinedButton(onClick = { onChange(row.copy(kind = ScheduleReviewKind.Sick, title = "Sick day", selected = true, confidence = ScheduleImportConfidence.NeedsReview)) }) {
                         Text("Sick")
                     }
                 }
-                TextButton(onClick = onDelete, modifier = Modifier.weight(1f)) {
+                TextButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
                     Text("Delete")
                 }
             }
         }
+    }
+}
+
+private fun ScheduleReviewRow.reviewTitle(): String {
+    return when (kind) {
+        ScheduleReviewKind.Shift -> shiftType.takeIf { it != "Custom" } ?: title.ifBlank { "Shift" }
+        else -> kind.label
+    }
+}
+
+private fun ScheduleReviewRow.reviewSubtitle(): String {
+    return when (kind) {
+        ScheduleReviewKind.Shift -> "${date.format(shortDateFormatter)} • ${start.format(timeFormatter)}-${end.format(timeFormatter)}"
+        ScheduleReviewKind.Ignored -> sourceText.ifBlank { "Unclear OCR line" }
+        else -> date.format(shortDateFormatter)
     }
 }
 
