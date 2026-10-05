@@ -2348,21 +2348,33 @@ private fun AddTrainingCard(
     }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        modifier = Modifier.fillMaxWidth().animateContentSize()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SectionHeader("Add training", "Enter one item or scan a printed training list.")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                if (mode == "manual") {
-                    Button(onClick = { mode = "manual" }, modifier = Modifier.weight(1f)) { Text("Manual") }
-                } else {
-                    OutlinedButton(onClick = { mode = "manual" }, modifier = Modifier.weight(1f)) { Text("Manual") }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(40.dp)
+                        .background(MaterialTheme.colorScheme.secondaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
                 }
-                if (mode == "photo") {
-                    Button(onClick = { mode = "photo" }, modifier = Modifier.weight(1f)) { Text("Photo") }
-                } else {
-                    OutlinedButton(onClick = { mode = "photo" }, modifier = Modifier.weight(1f)) { Text("Photo") }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Add training", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Enter one follow-up or scan a printed training list.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+                AssistChip(onClick = {}, label = { Text(if (mode == "manual") "Manual" else "Photo") })
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = mode == "manual", onClick = { mode = "manual" }, label = { Text("Manual entry") })
+                FilterChip(selected = mode == "photo", onClick = { mode = "photo" }, label = { Text("Photo import") })
             }
             if (mode == "manual") {
                 OutlinedTextField(
@@ -2385,8 +2397,8 @@ private fun AddTrainingCard(
                     value = dueDate,
                     onChanged = { dueDate = it }
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(onClick = { dueDate = null }, modifier = Modifier.weight(1f)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { dueDate = null }) {
                         Text("No date")
                     }
                     Button(
@@ -2396,20 +2408,35 @@ private fun AddTrainingCard(
                             trainingTitle = ""
                             dueDate = LocalDate.now().plusDays(7)
                         },
-                        enabled = associateName.isNotBlank() && trainingTitle.isNotBlank(),
-                        modifier = Modifier.weight(1f)
+                        enabled = associateName.isNotBlank() && trainingTitle.isNotBlank()
                     ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
                         Text("Add")
                     }
                 }
             } else {
-                OutlinedButton(
-                    onClick = { imagePicker.launch("image/*") },
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.FileUpload, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (importState.isReadingImage) "Reading photo..." else "Take or choose printout photo")
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Scan a printout", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Use a clear photo of the associate training list, then review the detected text before importing.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedButton(
+                            onClick = { imagePicker.launch("image/*") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.FileUpload, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (importState.isReadingImage) "Reading photo..." else "Take or choose photo")
+                        }
+                    }
                 }
                 OutlinedTextField(
                     value = importState.rawText,
@@ -2419,15 +2446,23 @@ private fun AddTrainingCard(
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (importState.parsedItems.isNotEmpty()) {
-                    Text("${importState.parsedItems.size} rows ready to import", style = MaterialTheme.typography.labelLarge)
-                    importState.parsedItems.take(3).forEach { item ->
-                        Text(
-                            "${item.associateName} - ${item.trainingTitle}${item.dueDate?.let { " - due ${it.format(dateFormatter)}" }.orEmpty()}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f)),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("${importState.parsedItems.size} rows ready to import", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                            importState.parsedItems.take(3).forEach { item ->
+                                Text(
+                                    "${item.associateName} - ${item.trainingTitle}${item.dueDate?.let { " - due ${it.format(dateFormatter)}" }.orEmpty()}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
                 }
                 Button(
@@ -2435,11 +2470,17 @@ private fun AddTrainingCard(
                     enabled = importState.parsedItems.isNotEmpty(),
                     modifier = Modifier.fillMaxWidth()
                 ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
                     Text("Import training rows")
                 }
             }
-            importState.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-            importState.message?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall) }
+            importState.error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+            importState.message?.let {
+                Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
