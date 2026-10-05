@@ -527,6 +527,7 @@ fun PlannerApp(
                     onDelete = viewModel::deleteTrainingItem,
                     onCreateTask = viewModel::createTaskFromTrainingItem,
                     onCreateFollowUps = viewModel::createTrainingFollowUpTasks,
+                    onAddChecklist = viewModel::addChecklistTemplate,
                     onSaveDeliStandards = viewModel::saveDeliStandardRecord
                 )
             }
@@ -1587,6 +1588,7 @@ private fun ManagerScreen(
     onDelete: (String) -> Unit,
     onCreateTask: (String) -> Unit,
     onCreateFollowUps: () -> Unit,
+    onAddChecklist: (String) -> Unit,
     onSaveDeliStandards: (DeliStandardDayRecord) -> Unit
 ) {
     val today = LocalDate.now()
@@ -1643,6 +1645,7 @@ private fun ManagerScreen(
             DeliStandardsCard(
                 state = state,
                 today = today,
+                onAddChecklist = onAddChecklist,
                 onSave = onSaveDeliStandards
             )
         }
@@ -1733,8 +1736,10 @@ private val deliStandardColumns = listOf(
 private fun DeliStandardsCard(
     state: AppState,
     today: LocalDate,
+    onAddChecklist: (String) -> Unit,
     onSave: (DeliStandardDayRecord) -> Unit
 ) {
+    var mode by remember { mutableStateOf("Daily") }
     val saved = state.deliStandardRecords.firstOrNull { it.date == today } ?: DeliStandardDayRecord(date = today)
     var managerOnOpen by remember(saved.updatedAt) { mutableStateOf(saved.managerOnOpen) }
     var managerOnClose by remember(saved.updatedAt) { mutableStateOf(saved.managerOnClose) }
@@ -1751,6 +1756,9 @@ private fun DeliStandardsCard(
     val missCounts = deliStandardColumns.associateWith { column ->
         trackerRecords.count { record -> record.checks[column] == "N" }
     }
+    val markedCount = deliStandardColumns.count { checks[it] in setOf("Y", "N") }
+    val missCount = deliStandardColumns.count { checks[it] == "N" }
+    val savedToday = state.deliStandardRecords.any { it.date == today }
 
     fun currentRecord() = DeliStandardDayRecord(
         date = today,
@@ -1772,61 +1780,193 @@ private fun DeliStandardsCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SectionHeader("Deli standards", "Daily sheet and two-week N-count tracker.")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = managerOnOpen,
-                    onValueChange = { managerOnOpen = it },
-                    label = { Text("Manager on open") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedTextField(
-                    value = managerOnClose,
-                    onValueChange = { managerOnClose = it },
-                    label = { Text("Manager on close") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
+            DeliStandardsHeader(
+                today = today,
+                markedCount = markedCount,
+                missCount = missCount,
+                savedToday = savedToday
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onAddChecklist("deli_daily_standards") }) { Text("Add daily tasks") }
+                OutlinedButton(onClick = { onAddChecklist("deli_working_agreements") }) { Text("Agreements") }
+                OutlinedButton(onClick = { onAddChecklist("deli_two_week_tracker") }) { Text("Tracker task") }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                deliStandardColumns.forEach { column ->
-                    DeliStandardCheckRow(
-                        label = column,
-                        value = checks[column],
-                        onChange = { value -> checks = checks + (column to value) }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Daily", "Tracker").forEach { option ->
+                    FilterChip(
+                        selected = mode == option,
+                        onClick = { mode = option },
+                        label = { Text(option) }
                     )
                 }
             }
-            Text("Stocking coverage", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            DeliBooleanRow("Stocker scheduled?", stockingScheduled) { stockingScheduled = it }
-            DeliBooleanRow("Pulled from stocking?", pulledFromStocking) { pulledFromStocking = it }
+            if (mode == "Daily") {
+                DeliDailySheetSection(
+                    managerOnOpen = managerOnOpen,
+                    onManagerOnOpen = { managerOnOpen = it },
+                    managerOnClose = managerOnClose,
+                    onManagerOnClose = { managerOnClose = it },
+                    checks = checks,
+                    onCheckChange = { column, value -> checks = checks + (column to value) },
+                    stockingScheduled = stockingScheduled,
+                    onStockingScheduled = { stockingScheduled = it },
+                    pulledFromStocking = pulledFromStocking,
+                    onPulledFromStocking = { pulledFromStocking = it },
+                    pulledFor = pulledFor,
+                    onPulledFor = { pulledFor = it },
+                    stockingCoveredBy = stockingCoveredBy,
+                    onStockingCoveredBy = { stockingCoveredBy = it },
+                    stockingFinished = stockingFinished,
+                    onStockingFinished = { stockingFinished = it },
+                    productLeft = productLeft,
+                    onProductLeft = { productLeft = it },
+                    notes = notes,
+                    onNotes = { notes = it }
+                )
+                Button(onClick = { onSave(currentRecord()) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (savedToday) "Update deli standards" else "Save deli standards")
+                }
+            } else {
+                DeliTrackerSummary(missCounts = missCounts, recordCount = trackerRecords.size)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DeliStandardsHeader(
+    today: LocalDate,
+    markedCount: Int,
+    missCount: Int,
+    savedToday: Boolean
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Deli standards", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text(
+                    today.format(dateFormatter),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            AssistChip(
+                onClick = {},
+                label = { Text(if (savedToday) "Saved today" else "Not saved") },
+                colors = AssistChipDefaults.assistChipColors(
+                    containerColor = if (savedToday) MaterialTheme.colorScheme.successContainer else MaterialTheme.colorScheme.surfaceVariant,
+                    labelColor = if (savedToday) MaterialTheme.colorScheme.onSuccessContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            )
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            AssistChip(onClick = {}, label = { Text("$markedCount of ${deliStandardColumns.size} marked") })
+            AssistChip(
+                onClick = {},
+                label = { Text("$missCount misses today") },
+                colors = AssistChipDefaults.assistChipColors(
+                    containerColor = if (missCount > 0) MaterialTheme.colorScheme.warningContainer else MaterialTheme.colorScheme.successContainer,
+                    labelColor = if (missCount > 0) MaterialTheme.colorScheme.onWarningContainer else MaterialTheme.colorScheme.onSuccessContainer
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeliDailySheetSection(
+    managerOnOpen: String,
+    onManagerOnOpen: (String) -> Unit,
+    managerOnClose: String,
+    onManagerOnClose: (String) -> Unit,
+    checks: Map<String, String>,
+    onCheckChange: (String, String) -> Unit,
+    stockingScheduled: Boolean?,
+    onStockingScheduled: (Boolean?) -> Unit,
+    pulledFromStocking: Boolean?,
+    onPulledFromStocking: (Boolean?) -> Unit,
+    pulledFor: String,
+    onPulledFor: (String) -> Unit,
+    stockingCoveredBy: String,
+    onStockingCoveredBy: (String) -> Unit,
+    stockingFinished: Boolean?,
+    onStockingFinished: (Boolean?) -> Unit,
+    productLeft: Boolean?,
+    onProductLeft: (Boolean?) -> Unit,
+    notes: String,
+    onNotes: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = managerOnOpen,
+                onValueChange = onManagerOnOpen,
+                label = { Text("Open manager") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = managerOnClose,
+                onValueChange = onManagerOnClose,
+                label = { Text("Close manager") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        DeliPanel(title = "Daily objectives", subtitle = "Tap Y or N as each line is verified.") {
+            deliStandardColumns.forEach { column ->
+                DeliStandardCheckRow(
+                    label = column,
+                    value = checks[column],
+                    onChange = { value -> onCheckChange(column, value) }
+                )
+            }
+        }
+        DeliPanel(title = "Stocking coverage", subtitle = "Keep the pull decision and handoff visible.") {
+            DeliBooleanRow("Stocker scheduled?", stockingScheduled, onStockingScheduled)
+            DeliBooleanRow("Pulled from stocking?", pulledFromStocking, onPulledFromStocking)
             OutlinedTextField(
                 value = pulledFor,
-                onValueChange = { pulledFor = it },
-                label = { Text("If pulled: to do what?") },
+                onValueChange = onPulledFor,
+                label = { Text("Pulled to do what?") },
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
                 value = stockingCoveredBy,
-                onValueChange = { stockingCoveredBy = it },
+                onValueChange = onStockingCoveredBy,
                 label = { Text("Who covered stocking?") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
-            DeliBooleanRow("Stocking finished by close?", stockingFinished) { stockingFinished = it }
-            DeliBooleanRow("Product left in back room?", productLeft) { productLeft = it }
-            OutlinedTextField(
-                value = notes,
-                onValueChange = { notes = it },
-                label = { Text("Notes / handoff to next shift") },
-                minLines = 3,
-                modifier = Modifier.fillMaxWidth()
-            )
-            DeliTrackerSummary(missCounts = missCounts, recordCount = trackerRecords.size)
-            Button(onClick = { onSave(currentRecord()) }, modifier = Modifier.fillMaxWidth()) {
-                Text("Save deli standards")
-            }
+            DeliBooleanRow("Finished by close?", stockingFinished, onStockingFinished)
+            DeliBooleanRow("Product left in back room?", productLeft, onProductLeft)
+        }
+        OutlinedTextField(
+            value = notes,
+            onValueChange = onNotes,
+            label = { Text("Notes / handoff") },
+            minLines = 3,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun DeliPanel(title: String, subtitle: String, content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            content()
         }
     }
 }
