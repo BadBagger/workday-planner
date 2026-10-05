@@ -4876,11 +4876,26 @@ private fun WorkImagesSection(
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SectionHeader("Work images", "Save reference photos and search labels or detected text.")
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(40.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.FileUpload, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Work images", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Save plannograms, shelf labels, order sheets, and deli references.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                AssistChip(onClick = {}, label = { Text("${images.size}") })
+            }
             OutlinedTextField(
                 value = title,
                 onValueChange = { title = it },
@@ -4889,16 +4904,25 @@ private fun WorkImagesSection(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
-            OutlinedButton(
-                onClick = { imagePicker.launch("image/*") },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Add work image")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = { imagePicker.launch("image/*") },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Add image")
+                }
+                AssistChip(onClick = {}, label = { Text(if (searchText.isBlank()) "All images" else "Filtered") })
             }
             message?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(10.dp))
+                }
             }
             OutlinedTextField(
                 value = searchText,
@@ -4917,10 +4941,8 @@ private fun WorkImagesSection(
             }
 
             if (filteredImages.isEmpty()) {
-                Text(
-                    if (images.isEmpty()) "No work images saved yet." else "No images match this search.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                WorkImagesEmptyPanel(
+                    text = if (images.isEmpty()) "No work images saved yet. Add a reference photo when something is easier to see than type." else "No images match this search."
                 )
             } else {
                 filteredImages.forEach { image ->
@@ -4933,11 +4955,24 @@ private fun WorkImagesSection(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
+private fun WorkImagesEmptyPanel(text: String) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun WorkImageCard(image: WorkImage, onDelete: () -> Unit) {
     val bitmap = remember(image.imagePath) { decodeWorkImage(image.imagePath) }
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
-        modifier = Modifier.fillMaxWidth()
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (bitmap != null) {
@@ -4951,7 +4986,7 @@ private fun WorkImageCard(image: WorkImage, onDelete: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(image.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(image.date.format(dateFormatter), style = MaterialTheme.typography.bodySmall)
+                    Text(image.date.format(dateFormatter), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 TextButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = null)
