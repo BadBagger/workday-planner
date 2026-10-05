@@ -7482,6 +7482,7 @@ private fun ScheduleScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ScheduleQuickActions(
     showAddShift: Boolean,
@@ -7495,34 +7496,59 @@ private fun ScheduleQuickActions(
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = onToggleAddShift, modifier = Modifier.weight(1f)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(38.dp)
+                        .height(38.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Schedule actions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Add shifts, import a photo schedule, or mark planned time off.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onToggleAddShift) {
                     Icon(Icons.Default.Add, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text(if (showAddShift) "Hide shift" else "Add shift")
                 }
-                OutlinedButton(onClick = onTogglePatternWizard, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = onImportSchedule) {
+                    Icon(Icons.Default.FileUpload, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Import schedule")
+                }
+                OutlinedButton(onClick = onTogglePatternWizard) {
                     Icon(Icons.Default.CalendarMonth, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text(if (showPatternWizard) "Hide pattern" else "Shift pattern")
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onImportSchedule, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.FileUpload, contentDescription = null)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Mark time off", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    DateOnlyRow("Day off", dayOffDate, onChanged = onDayOffDateChanged, modifier = Modifier.weight(1f))
                     Spacer(Modifier.width(8.dp))
-                    Text("Import")
+                    OutlinedButton(onClick = onAddDayOff) {
+                        Icon(Icons.Default.Event, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Add")
+                    }
                 }
-                Spacer(Modifier.weight(1f))
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                DateOnlyRow("Day off", dayOffDate, onChanged = onDayOffDateChanged, modifier = Modifier.weight(1f))
-                Spacer(Modifier.width(8.dp))
-                OutlinedButton(onClick = onAddDayOff) { Text("Add day off") }
             }
         }
     }
