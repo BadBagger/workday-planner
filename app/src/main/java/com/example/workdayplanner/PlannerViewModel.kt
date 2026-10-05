@@ -54,11 +54,22 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.example.workdayplanner.data.TodoistCoordinator
+import com.example.workdayplanner.data.TodoistCredentialStore
+import com.example.workdayplanner.data.TodoistPendingAction
+import com.example.workdayplanner.data.TodoistSync
+import com.example.workdayplanner.data.TodoistSyncOutcome
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -68,6 +79,8 @@ import kotlin.math.max
 
 class PlannerViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = PlannerRepository(application)
+    private val todoistCredentials = TodoistCredentialStore(application)
+    private val todoist = TodoistCoordinator(repository, todoistCredentials)
     private val alarmScheduler = AlarmScheduler(application)
     private val shiftAlarmScheduler = ShiftAlarmScheduler(application)
     private val calendarSyncManager = CalendarSyncManager(application)
@@ -83,6 +96,15 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     val imageMessage: StateFlow<String?> = mutableImageMessage.asStateFlow()
     private val mutableTrainingImportState = MutableStateFlow(TrainingImportUiState())
     val trainingImportState: StateFlow<TrainingImportUiState> = mutableTrainingImportState.asStateFlow()
+    private val mutableTodoist = MutableStateFlow(initialTodoistUi())
+    val todoistSync: StateFlow<TodoistSyncUiState> = mutableTodoist.asStateFlow()
+    private val mutableTodoistAuthRequest = MutableStateFlow<String?>(null)
+    val todoistAuthRequest: StateFlow<String?> = mutableTodoistAuthRequest.asStateFlow()
+    private val todoistMutex = Mutex()
+    private var todoistLoop: Job? = null
+    private var todoistAgain = false
+    private var todoistRefreshLoop: Job? = null
+    private var lastTodoistRefreshMs = 0L
 
     init {
         alarmScheduler.rescheduleOpenTasks(state.value.tasks)
@@ -91,7 +113,8 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveTask(task: TaskItem): TaskItem {
         val existing = state.value.tasks.firstOrNull { it.id == task.id }
-        val resolved = ScheduleAwareTaskPlanner.resolve(task, state.value)
+        val linkedId = task.todoistId ?: existing?.todoistId
+        val resolved = if (linkedId != null) task else ScheduleAwareTaskPlanner.resolve(task, state.value)
         val withAlarmStatus = resolved.copy(
             alarmSchedulingStatus = when {
                 resolved.reminderType == ReminderType.None -> AlarmSchedulingStatus.NoAlarmRequested
@@ -127,7 +150,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
                 }
         )
         repository.upsertTask(finalTask)
-        return finalTask
+        return queueTodoistTask(existing, finalTask)
     }
 
     fun addChecklistTemplate(templateId: String) {
@@ -135,8 +158,11 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun deleteTask(taskId: String) {
-        state.value.tasks.firstOrNull { it.id == taskId }?.let { alarmScheduler.cancel(it) }
+        val task = state.value.tasks.firstOrNull { it.id == taskId }
+        task?.let { alarmScheduler.cancel(it) }
+        task?.todoistId?.let(todoistCredentials::enqueueDelete)
         repository.deleteTask(taskId)
+        if (task?.todoistId != null) requestTodoistSync()
     }
 
     fun clearCompletedTasks() {
@@ -341,15 +367,33 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun saveEvent(event: WorkEvent) {
-        repository.upsertEvent(event)
+        val existing = state.value.events.firstOrNull { it.id == event.id }
+        val remoteId = event.todoistId ?: existing?.todoistId
+        val queued = if (todoist.isConnected()) {
+            event.copy(
+                todoistId = remoteId,
+                todoistPending = if (remoteId == null) TodoistPendingAction.Create else TodoistPendingAction.Update
+            )
+        } else {
+            event.copy(todoistId = remoteId, todoistPending = existing?.todoistPending ?: event.todoistPending)
+        }
+        repository.upsertEvent(queued)
+        if (queued.todoistPending != TodoistPendingAction.None) requestTodoistSync()
     }
 
     fun deleteEvent(eventId: String) {
+        val event = state.value.events.firstOrNull { it.id == eventId }
+        event?.todoistId?.let(todoistCredentials::enqueueDelete)
         repository.deleteEvent(eventId)
+        if (event?.todoistId != null) requestTodoistSync()
     }
 
     fun toggleComplete(taskId: String) {
         val task = state.value.tasks.firstOrNull { it.id == taskId } ?: return
+        if (task.todoistId != null || task.todoistPending != TodoistPendingAction.None) {
+            toggleTodoistTask(task)
+            return
+        }
         repository.toggleComplete(taskId)
         if (!task.completed) {
             alarmScheduler.cancel(task)
@@ -718,10 +762,221 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         val height: Int
     )
 
+    fun onAppForegrounded() {
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - lastTodoistRefreshMs > 20_000L) {
+            lastTodoistRefreshMs = nowMs
+            requestTodoistSync()
+        }
+        todoistRefreshLoop?.cancel()
+        todoistRefreshLoop = viewModelScope.launch {
+            while (true) {
+                delay(180_000)
+                requestTodoistSync()
+            }
+        }
+    }
+
+    fun onAppBackgrounded() {
+        todoistRefreshLoop?.cancel()
+        todoistRefreshLoop = null
+    }
+
+    fun refreshTodoist() {
+        lastTodoistRefreshMs = System.currentTimeMillis()
+        requestTodoistSync()
+    }
+
+    fun connectTodoistWithToken(token: String) {
+        viewModelScope.launch {
+            val failure = runCatching { todoist.savePersonalToken(token) }.exceptionOrNull()
+            if (failure != null) {
+                mutableTodoist.value = mutableTodoist.value.copy(connected = false, syncing = false, errorMessage = failure.message)
+                return@launch
+            }
+            mutableTodoist.value = mutableTodoist.value.copy(
+                connected = true,
+                errorMessage = null,
+                statusMessage = "Connected. Syncing tasks…"
+            )
+            refreshTodoist()
+        }
+    }
+
+    fun startTodoistOAuth() {
+        viewModelScope.launch {
+            mutableTodoist.value = mutableTodoist.value.copy(syncing = true, errorMessage = null)
+            val uri = withContext(Dispatchers.IO) { runCatching { todoist.beginAuthorization() } }
+            uri.fold(
+                onSuccess = {
+                    mutableTodoist.value = mutableTodoist.value.copy(
+                        syncing = false,
+                        statusMessage = "Continue in the browser to allow Todoist access."
+                    )
+                    mutableTodoistAuthRequest.value = it.toString()
+                },
+                onFailure = {
+                    mutableTodoist.value = mutableTodoist.value.copy(
+                        syncing = false,
+                        errorMessage = it.message ?: "Could not start Todoist sign-in."
+                    )
+                }
+            )
+        }
+    }
+
+    fun consumeTodoistAuthRequest() {
+        mutableTodoistAuthRequest.value = null
+    }
+
+    fun completeTodoistOAuth(redirect: String) {
+        viewModelScope.launch {
+            mutableTodoist.value = mutableTodoist.value.copy(syncing = true, errorMessage = null)
+            val before = repository.state.value.tasks
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching { todoist.completeAuthorization(android.net.Uri.parse(redirect)) }.getOrElse {
+                    TodoistSyncOutcome(connected = todoist.isConnected(), error = it.message ?: "Todoist sign-in failed.")
+                }
+            }
+            rescheduleTodoistAlarms(before, repository.state.value.tasks)
+            publishTodoist(outcome)
+        }
+    }
+
+    fun reportTodoistError(message: String) {
+        mutableTodoist.value = mutableTodoist.value.copy(syncing = false, errorMessage = message)
+    }
+
+    fun disconnectTodoist() {
+        todoist.disconnect()
+        todoistRefreshLoop?.cancel()
+        mutableTodoist.value = TodoistSyncUiState(
+            connected = false,
+            statusMessage = "Disconnected. Tasks already on this phone stay here."
+        )
+    }
+
+    private fun queueTodoistTask(existing: TaskItem?, saved: TaskItem): TaskItem {
+        val remoteId = saved.todoistId ?: existing?.todoistId
+        val pendingAlready = saved.todoistPending != TodoistPendingAction.None || existing?.todoistPending != TodoistPendingAction.None
+        if (!todoist.isConnected() && remoteId == null && !pendingAlready) return saved
+        val creating = remoteId == null
+        if (creating && !TodoistSync.canMirror(saved)) return saved
+        if (creating && !todoist.isConnected()) return saved
+        val changed = existing == null || TodoistSync.userFieldsChanged(existing, saved)
+        if (!changed && remoteId != null && saved.todoistPending == TodoistPendingAction.None && existing?.todoistPending == TodoistPendingAction.None) {
+            return saved
+        }
+        val pending = when {
+            creating -> TodoistPendingAction.Create
+            saved.completed && existing?.completed == false -> TodoistPendingAction.Complete
+            !saved.completed && existing?.completed == true -> TodoistPendingAction.Reopen
+            else -> TodoistPendingAction.Update
+        }
+        val queued = saved.copy(
+            todoistId = remoteId,
+            todoistProjectId = saved.todoistProjectId ?: existing?.todoistProjectId,
+            todoistDueString = saved.todoistDueString ?: existing?.todoistDueString,
+            todoistRecurring = saved.todoistRecurring || existing?.todoistRecurring == true,
+            todoistUpdatedAt = saved.todoistUpdatedAt ?: existing?.todoistUpdatedAt,
+            durationMinutes = saved.durationMinutes ?: existing?.durationMinutes,
+            todoistPending = pending
+        )
+        repository.upsertTask(queued)
+        if (todoist.isConnected()) requestTodoistSync()
+        return queued
+    }
+
+    private fun toggleTodoistTask(task: TaskItem) {
+        val nowCompleted = !task.completed
+        val pending = when {
+            task.todoistId == null -> TodoistPendingAction.Create
+            nowCompleted -> TodoistPendingAction.Complete
+            else -> TodoistPendingAction.Reopen
+        }
+        if (nowCompleted) alarmScheduler.cancel(task)
+        val updated = task.copy(
+            completed = nowCompleted,
+            completionHistory = if (nowCompleted) task.completionHistory + LocalDateTime.now() else task.completionHistory,
+            todoistPending = pending
+        )
+        val stored = if (!nowCompleted && updated.reminderType != ReminderType.None) {
+            updated.copy(alarmDispatchStatus = alarmScheduler.schedule(updated))
+        } else {
+            updated
+        }
+        repository.upsertTask(stored)
+        if (todoist.isConnected()) requestTodoistSync()
+    }
+
+    private fun requestTodoistSync() {
+        if (!todoist.isConnected()) {
+            mutableTodoist.value = mutableTodoist.value.copy(connected = false, syncing = false)
+            return
+        }
+        todoistAgain = true
+        if (todoistLoop?.isActive == true) return
+        todoistLoop = viewModelScope.launch {
+            while (todoistAgain) {
+                todoistAgain = false
+                todoistMutex.withLock { runTodoistSync() }
+            }
+        }
+    }
+
+    private suspend fun runTodoistSync() {
+        mutableTodoist.value = mutableTodoist.value.copy(connected = true, syncing = true, errorMessage = null)
+        val before = repository.state.value.tasks
+        val outcome = withContext(Dispatchers.IO) { todoist.sync() }
+        rescheduleTodoistAlarms(before, repository.state.value.tasks)
+        publishTodoist(outcome)
+    }
+
+    private fun publishTodoist(outcome: TodoistSyncOutcome) {
+        mutableTodoist.value = TodoistSyncUiState(
+            connected = todoist.isConnected(),
+            syncing = false,
+            lastSyncedAt = outcome.syncedAt ?: todoist.lastSyncedAt(),
+            statusMessage = outcome.message ?: mutableTodoist.value.statusMessage,
+            errorMessage = outcome.error
+        )
+    }
+
+    private fun rescheduleTodoistAlarms(before: List<TaskItem>, after: List<TaskItem>) {
+        val previous = before.associateBy { it.id }
+        after.forEach { task ->
+            val old = previous[task.id]
+            if (task.completed || task.reminderType == ReminderType.None || task.alarmAt == null) {
+                if (old?.alarmAt != null || (old != null && !old.completed && task.completed)) alarmScheduler.cancel(task.id)
+                return@forEach
+            }
+            if (old?.alarmAt != task.alarmAt || old.deadline != task.deadline || old.completed != task.completed) {
+                alarmScheduler.cancel(task.id)
+                alarmScheduler.schedule(task)
+            }
+        }
+    }
+
+    private fun initialTodoistUi(): TodoistSyncUiState {
+        return TodoistSyncUiState(
+            connected = todoist.isConnected(),
+            lastSyncedAt = todoist.lastSyncedAt(),
+            statusMessage = if (todoist.isConnected()) "Connected. Tasks refresh when you open the app." else null
+        )
+    }
+
     private companion object {
         const val TAG = "WorkdayPlannerVM"
     }
 }
+
+data class TodoistSyncUiState(
+    val connected: Boolean = false,
+    val syncing: Boolean = false,
+    val lastSyncedAt: LocalDateTime? = null,
+    val statusMessage: String? = null,
+    val errorMessage: String? = null
+)
 
 private fun TrainingItem.toTrainingTask(): TaskItem {
     val today = LocalDate.now()

@@ -137,8 +137,13 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.example.workdayplanner.BuildConfig
 import com.example.workdayplanner.PlannerViewModel
+import com.example.workdayplanner.TodoistSyncUiState
 import com.example.workdayplanner.TrainingImportUiState
 import com.example.workdayplanner.alarm.AlarmScheduler
 import com.example.workdayplanner.calendar.DeviceCalendar
@@ -167,6 +172,9 @@ import com.example.workdayplanner.data.WorkNote
 import com.example.workdayplanner.data.WorkNoteKind
 import com.example.workdayplanner.data.WidgetLayoutMode
 import com.example.workdayplanner.data.ParsedSchedule
+import com.example.workdayplanner.data.PlannerDayItem
+import com.example.workdayplanner.data.PlannerDayKind
+import com.example.workdayplanner.data.PlannerDayPlan
 import com.example.workdayplanner.data.PayEstimator
 import com.example.workdayplanner.data.PayEstimate
 import com.example.workdayplanner.data.PayPeriodType
@@ -313,6 +321,9 @@ fun PlannerApp(
     val calendarMessage by viewModel.calendarMessage.collectAsStateWithLifecycle()
     val imageMessage by viewModel.imageMessage.collectAsStateWithLifecycle()
     val trainingImportState by viewModel.trainingImportState.collectAsStateWithLifecycle()
+    val todoistSync by viewModel.todoistSync.collectAsStateWithLifecycle()
+    val todoistAuthRequest by viewModel.todoistAuthRequest.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
     val topLevel = listOf(Screen.Tasks, Screen.WorkTasks, Screen.Notes, Screen.Schedule, Screen.Manager, Screen.Settings)
     var showPremiumScreen by remember { mutableStateOf(false) }
@@ -334,6 +345,17 @@ fun PlannerApp(
             navController.navigate(Screen.Import.route) {
                 launchSingleTop = true
             }
+        }
+    }
+
+    LaunchedEffect(todoistAuthRequest) {
+        val request = todoistAuthRequest ?: return@LaunchedEffect
+        val opened = runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(request)))
+        }
+        viewModel.consumeTodoistAuthRequest()
+        if (opened.isFailure) {
+            viewModel.reportTodoistError("Couldn't open the browser. Paste a Todoist API token instead.")
         }
     }
 
@@ -497,7 +519,12 @@ fun PlannerApp(
                     onAddChecklist = viewModel::addChecklistTemplate,
                     onSaveVoiceTask = viewModel::saveTask,
                     onDismissImportMessage = viewModel::dismissImportMessage,
-                    onOpenPremium = ::openPremium
+                    onOpenPremium = ::openPremium,
+                    todoistSync = todoistSync,
+                    onRefreshTodoist = viewModel::refreshTodoist,
+                    onOpenSettings = {
+                        navController.navigate(Screen.Settings.route) { launchSingleTop = true }
+                    }
                 )
             }
             composable(Screen.Notes.route) {
@@ -554,7 +581,9 @@ fun PlannerApp(
                     onRemoveDayOff = viewModel::removeDayOff,
                     onClearSchedule = viewModel::clearSchedule,
                     onImportSchedule = { navController.navigate(Screen.Import.route) },
-                    onOpenPremium = ::openPremium
+                    onOpenPremium = ::openPremium,
+                    onOpenTask = { navController.navigate("${Screen.TaskDetail.route}/$it") },
+                    onOpenEvent = { navController.navigate("${Screen.EventDetail.route}/$it") }
                 )
             }
             composable(Screen.Import.route) {
@@ -605,7 +634,12 @@ fun PlannerApp(
                         onSyncCalendar = viewModel::syncShiftsToCalendar,
                         onNotificationPermissionNeeded = onNotificationPermissionNeeded,
                         onTesterModeChanged = viewModel::setMockPremium,
-                        onOpenPremium = ::openPremium
+                        onOpenPremium = ::openPremium,
+                        todoistSync = todoistSync,
+                        onConnectTodoist = viewModel::startTodoistOAuth,
+                        onConnectTodoistToken = viewModel::connectTodoistWithToken,
+                        onRefreshTodoist = viewModel::refreshTodoist,
+                        onDisconnectTodoist = viewModel::disconnectTodoist
                     )
                 }
             }
@@ -1046,7 +1080,10 @@ private fun TaskListScreen(
     onAddChecklist: (String) -> Unit,
     onSaveVoiceTask: (TaskItem) -> TaskItem,
     onDismissImportMessage: () -> Unit,
-    onOpenPremium: () -> Unit
+    onOpenPremium: () -> Unit,
+    todoistSync: TodoistSyncUiState? = null,
+    onRefreshTodoist: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}
 ) {
     val today = LocalDate.now()
     val now = LocalDateTime.now()
@@ -1151,6 +1188,13 @@ private fun TaskListScreen(
                 onAddTask = onAddTask,
                 onAddRepeatingTask = onAddRepeatingTask
             )
+            if (todoistSync != null) {
+                TodoistTasksBanner(
+                    status = todoistSync,
+                    onRefresh = onRefreshTodoist,
+                    onOpenSettings = onOpenSettings
+                )
+            }
             ChecklistTemplateSection(onAddChecklist = onAddChecklist)
             EmptyState("No work to-dos yet", "Add one-off tasks or build repeating work tasks here. Today stays focused on your shift.")
         }
@@ -1187,6 +1231,13 @@ private fun TaskListScreen(
                 dueSoonCount = allDueSoonCount,
                 onAddTask = onAddTask,
                 onAddRepeatingTask = onAddRepeatingTask
+            )
+        }
+        if (!showDashboardHeader && todoistSync != null) item {
+            TodoistTasksBanner(
+                status = todoistSync,
+                onRefresh = onRefreshTodoist,
+                onOpenSettings = onOpenSettings
             )
         }
         item {
@@ -5015,6 +5066,10 @@ private fun TaskCard(
                         )
                     }
                     if (task.repeatRule != RepeatRule.None) AssistChip(onClick = {}, label = { Text(task.repeatLabel()) })
+                    if (task.todoistRecurring && task.repeatRule == RepeatRule.None && task.todoistDueString.isNullOrBlank().not()) {
+                        AssistChip(onClick = {}, label = { Text(task.todoistDueString.orEmpty()) })
+                    }
+                    if (task.todoistId != null) AssistChip(onClick = {}, label = { Text("Todoist") })
                     scheduleInsight.labels.forEach { label ->
                         val color = label.scheduleLabelColor()
                         AssistChip(
@@ -5139,7 +5194,25 @@ private fun TaskDetailScreen(
             timingRule = timingRule,
             carryOverBehavior = carryOverBehavior,
             alarmOffsetMinutes = alarmOffsetMinutes.toLongOrNull()?.coerceAtLeast(0) ?: 30,
-            completed = completed
+            reminderType = if (reminderEnabled) {
+                task?.reminderType?.takeIf { it != ReminderType.None } ?: ReminderType.FullAlarm
+            } else {
+                ReminderType.None
+            },
+            alarmDelivery = task?.alarmDelivery ?: AlarmDelivery.WorkdayPlannerAlarm,
+            rawVoiceTranscript = task?.rawVoiceTranscript.orEmpty(),
+            createdUsingVoice = task?.createdUsingVoice ?: false,
+            timeZoneId = task?.timeZoneId ?: java.time.ZoneId.systemDefault().id,
+            createdAt = task?.createdAt ?: LocalDateTime.now(),
+            completed = completed,
+            completionHistory = task?.completionHistory.orEmpty(),
+            todoistId = task?.todoistId,
+            todoistProjectId = task?.todoistProjectId,
+            todoistDueString = task?.todoistDueString,
+            todoistRecurring = task?.todoistRecurring ?: false,
+            todoistUpdatedAt = task?.todoistUpdatedAt,
+            durationMinutes = task?.durationMinutes,
+            todoistPending = task?.todoistPending ?: com.example.workdayplanner.data.TodoistPendingAction.None
         )
     }
     fun requestReminderPermissionIfNeeded() {
@@ -5826,7 +5899,9 @@ private fun EventDetailScreen(event: WorkEvent?, onSave: (WorkEvent) -> Unit, on
                             notes = notes.trim(),
                             location = location.trim(),
                             startsAt = startsAt,
-                            endsAt = endsAt
+                            endsAt = endsAt,
+                            todoistId = event?.todoistId,
+                            todoistPending = event?.todoistPending ?: com.example.workdayplanner.data.TodoistPendingAction.None
                         )
                     )
                 }
@@ -6641,7 +6716,9 @@ private fun ScheduleScreen(
     onRemoveDayOff: (LocalDate) -> Unit,
     onClearSchedule: () -> Unit,
     onImportSchedule: () -> Unit,
-    onOpenPremium: () -> Unit
+    onOpenPremium: () -> Unit,
+    onOpenTask: (String) -> Unit,
+    onOpenEvent: (String) -> Unit
 ) {
     var showAddShift by remember { mutableStateOf(false) }
     var showPatternWizard by remember { mutableStateOf(false) }
@@ -6728,7 +6805,8 @@ private fun ScheduleScreen(
         if (!PremiumAccess.canUse(state, PremiumFeature.ShiftPatterns) && state.shiftPatterns.isEmpty()) {
             PremiumLockedCard(PremiumFeature.ShiftPatterns, "Manual shifts and days off stay free. Premium adds rotating patterns for schedules that repeat in cycles.", onOpenPremium)
         }
-        if (state.shifts.isEmpty() && state.daysOff.isEmpty()) {
+        val hasDatedPlans = state.events.isNotEmpty() || state.tasks.any { !it.completed && it.deadline != null }
+        if (state.shifts.isEmpty() && state.daysOff.isEmpty() && !hasDatedPlans) {
             ScheduleEmptyState(onImportSchedule = onImportSchedule, onAddShift = { showAddShift = true })
         } else {
             CurrentWeekSchedule(
@@ -6737,7 +6815,9 @@ private fun ScheduleScreen(
                     onRemoveDayOff(it)
                     scheduleMessage = "Day off removed."
                 },
-                onDeleteShift = onDeleteShift
+                onDeleteShift = onDeleteShift,
+                onOpenTask = onOpenTask,
+                onOpenEvent = onOpenEvent
             )
             NextSevenDaysSchedule(
                 state = state,
@@ -6745,7 +6825,9 @@ private fun ScheduleScreen(
                     onRemoveDayOff(it)
                     scheduleMessage = "Day off removed."
                 },
-                onDeleteShift = onDeleteShift
+                onDeleteShift = onDeleteShift,
+                onOpenTask = onOpenTask,
+                onOpenEvent = onOpenEvent
             )
         }
         OutlinedButton(
@@ -7370,6 +7452,110 @@ private fun ScheduleEmptyState(onImportSchedule: () -> Unit, onAddShift: () -> U
 }
 
 @Composable
+private fun TodoistTasksBanner(
+    status: TodoistSyncUiState,
+    onRefresh: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val detail = when {
+        status.syncing -> "Syncing with Todoist…"
+        !status.errorMessage.isNullOrBlank() -> status.errorMessage
+        !status.connected -> "Connect Todoist in Settings to keep these to-dos in sync."
+        status.lastSyncedAt != null -> "Todoist synced ${status.lastSyncedAt.format(timeFormatter)}. ${status.statusMessage.orEmpty()}"
+        else -> status.statusMessage ?: "Connected to Todoist."
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Todoist", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                if (status.connected) {
+                    OutlinedButton(onClick = onRefresh, enabled = !status.syncing, modifier = Modifier.weight(1f)) {
+                        Text(if (status.syncing) "Syncing" else "Refresh")
+                    }
+                }
+                OutlinedButton(onClick = onOpenSettings, modifier = Modifier.weight(1f)) {
+                    Text(if (status.connected) "Connection" else "Connect")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodoistSettingsCard(
+    status: TodoistSyncUiState,
+    onConnect: () -> Unit,
+    onConnectToken: (String) -> Unit,
+    onRefresh: () -> Unit,
+    onDisconnect: () -> Unit
+) {
+    var token by remember { mutableStateOf("") }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionHeader(
+                "Todoist",
+                "Plan to-dos here and keep them synced with every project in your Todoist account."
+            )
+            Text(
+                "Connect with Todoist in the browser, or paste the API token from Todoist Settings → Integrations → Developer. The token stays on this phone. Nothing is built into the app.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            val detail = when {
+                status.syncing -> "Working with Todoist…"
+                !status.errorMessage.isNullOrBlank() -> status.errorMessage
+                status.connected && status.lastSyncedAt != null -> "Connected. Last sync ${status.lastSyncedAt.format(dateTimeFormatter)}."
+                status.connected -> "Connected."
+                else -> "Not connected."
+            }
+            Text(detail, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            status.statusMessage?.takeIf { status.errorMessage.isNullOrBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Button(onClick = onConnect, enabled = !status.syncing, modifier = Modifier.fillMaxWidth()) {
+                Text("Connect with Todoist")
+            }
+            OutlinedTextField(
+                value = token,
+                onValueChange = { token = it },
+                label = { Text("API token") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = {
+                        onConnectToken(token)
+                        token = ""
+                    },
+                    enabled = token.isNotBlank() && !status.syncing,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Save token") }
+                if (status.connected) {
+                    OutlinedButton(onClick = onRefresh, enabled = !status.syncing, modifier = Modifier.weight(1f)) {
+                        Text("Refresh")
+                    }
+                }
+            }
+            if (status.connected) {
+                TextButton(onClick = onDisconnect) { Text("Disconnect") }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsScreen(
     state: AppState,
     onAppearanceModeChanged: (AppearanceMode) -> Unit,
@@ -7385,12 +7571,24 @@ private fun SettingsScreen(
     onSyncCalendar: () -> Unit,
     onNotificationPermissionNeeded: () -> Unit,
     onTesterModeChanged: (Boolean) -> Unit,
-    onOpenPremium: () -> Unit
+    onOpenPremium: () -> Unit,
+    todoistSync: TodoistSyncUiState,
+    onConnectTodoist: () -> Unit,
+    onConnectTodoistToken: (String) -> Unit,
+    onRefreshTodoist: () -> Unit,
+    onDisconnectTodoist: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
+        TodoistSettingsCard(
+            status = todoistSync,
+            onConnect = onConnectTodoist,
+            onConnectToken = onConnectTodoistToken,
+            onRefresh = onRefreshTodoist,
+            onDisconnect = onDisconnectTodoist
+        )
         StyleSection(
             state = state,
             onAppearanceModeChanged = onAppearanceModeChanged,
@@ -7833,7 +8031,13 @@ private fun PremiumLockedInline(feature: PremiumFeature, body: String, onOpenPre
 }
 
 @Composable
-private fun CurrentWeekSchedule(state: AppState, onRemoveDayOff: (LocalDate) -> Unit, onDeleteShift: (String) -> Unit) {
+private fun CurrentWeekSchedule(
+    state: AppState,
+    onRemoveDayOff: (LocalDate) -> Unit,
+    onDeleteShift: (String) -> Unit,
+    onOpenTask: (String) -> Unit,
+    onOpenEvent: (String) -> Unit
+) {
     val today = LocalDate.now()
     val weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     val days = (0L..6L).map { weekStart.plusDays(it) }
@@ -7843,12 +8047,20 @@ private fun CurrentWeekSchedule(state: AppState, onRemoveDayOff: (LocalDate) -> 
         dates = days,
         state = state,
         onRemoveDayOff = onRemoveDayOff,
-        onDeleteShift = onDeleteShift
+        onDeleteShift = onDeleteShift,
+        onOpenTask = onOpenTask,
+        onOpenEvent = onOpenEvent
     )
 }
 
 @Composable
-private fun NextSevenDaysSchedule(state: AppState, onRemoveDayOff: (LocalDate) -> Unit, onDeleteShift: (String) -> Unit) {
+private fun NextSevenDaysSchedule(
+    state: AppState,
+    onRemoveDayOff: (LocalDate) -> Unit,
+    onDeleteShift: (String) -> Unit,
+    onOpenTask: (String) -> Unit,
+    onOpenEvent: (String) -> Unit
+) {
     val today = LocalDate.now()
     ScheduleDaySection(
         title = "Next 7 days",
@@ -7856,7 +8068,9 @@ private fun NextSevenDaysSchedule(state: AppState, onRemoveDayOff: (LocalDate) -
         dates = (0L..6L).map { today.plusDays(it) },
         state = state,
         onRemoveDayOff = onRemoveDayOff,
-        onDeleteShift = onDeleteShift
+        onDeleteShift = onDeleteShift,
+        onOpenTask = onOpenTask,
+        onOpenEvent = onOpenEvent
     )
 }
 
@@ -7867,7 +8081,9 @@ private fun ScheduleDaySection(
     dates: List<LocalDate>,
     state: AppState,
     onRemoveDayOff: (LocalDate) -> Unit,
-    onDeleteShift: (String) -> Unit
+    onDeleteShift: (String) -> Unit,
+    onOpenTask: (String) -> Unit,
+    onOpenEvent: (String) -> Unit
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -7885,10 +8101,13 @@ private fun ScheduleDaySection(
                 ScheduleDayCard(
                     date = date,
                     shifts = state.shifts.filter { it.date == date }.sortedBy { it.start },
+                    plans = PlannerDayPlan.itemsFor(state, date),
                     isDayOff = date in state.daysOff,
                     linkedTaskCount = { shift -> state.tasks.count { it.linkedShiftId == shift.id } },
                     onRemoveDayOff = onRemoveDayOff,
-                    onDeleteShift = onDeleteShift
+                    onDeleteShift = onDeleteShift,
+                    onOpenTask = onOpenTask,
+                    onOpenEvent = onOpenEvent
                 )
             }
         }
@@ -7899,10 +8118,13 @@ private fun ScheduleDaySection(
 private fun ScheduleDayCard(
     date: LocalDate,
     shifts: List<WorkShift>,
+    plans: List<PlannerDayItem>,
     isDayOff: Boolean,
     linkedTaskCount: (WorkShift) -> Int,
     onRemoveDayOff: (LocalDate) -> Unit,
-    onDeleteShift: (String) -> Unit
+    onDeleteShift: (String) -> Unit,
+    onOpenTask: (String) -> Unit,
+    onOpenEvent: (String) -> Unit
 ) {
     val isToday = date == LocalDate.now()
     val container = when {
@@ -7939,8 +8161,39 @@ private fun ScheduleDayCard(
                     }
                 }
             }
+            if (plans.isNotEmpty()) {
+                Text("On this day", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                plans.take(4).forEach { item ->
+                    TextButton(
+                        onClick = {
+                            if (item.kind == PlannerDayKind.Event) onOpenEvent(item.id) else onOpenTask(item.id)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(item.scheduleLine(), modifier = Modifier.fillMaxWidth())
+                    }
+                }
+                if (plans.size > 4) {
+                    Text(
+                        "${plans.size - 4} more on the To-do tab",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
+}
+
+private fun PlannerDayItem.scheduleLine(): String {
+    val whenText = when {
+        start == null -> "All day"
+        end != null && end != start -> "${start.format(timeFormatter)} – ${end.format(timeFormatter)}"
+        else -> start.format(timeFormatter)
+    }
+    val repeat = repeats?.let { " · $it" }.orEmpty()
+    val kind = if (kind == PlannerDayKind.Event) "Event" else "Task"
+    return "$whenText · $title$repeat · $kind"
 }
 
 @Composable

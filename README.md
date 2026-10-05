@@ -13,6 +13,18 @@ Native Android work planner built with Kotlin, Jetpack Compose, local storage, n
 - Local-only storage with `SharedPreferences`
 - Compose Navigation across Today, Notes, Schedule, Manager, Settings, Import, and task detail screens
 - Full task/shift alarm support with local app alarms and system Clock handoff where available
+- Live Todoist sync for to-dos, repeating tasks, and dated plans
+
+## Todoist
+
+Workday Planner can keep the To-do tab in sync with the Todoist account you connect. Sync covers every project on that account, and it refreshes when you open the app and about every three minutes while the app is open. New tasks and completions made in the app are written back. Dated tasks and events also show on the Schedule tab.
+
+Connect from **Settings → Todoist**:
+
+1. **Connect with Todoist** opens Todoist in the browser and asks you to allow access. No client secret is stored in the app. The sign-in uses a public OAuth client registered on your phone, with PKCE.
+2. Or paste an API token from Todoist: **Settings → Integrations → Developer**. The token stays on this phone.
+
+Shift-only repeats (opening, closing, truck, and inventory) stay in Workday Planner because Todoist has no matching rule. Daily, weekday, weekly, and custom-day repeats sync.
 
 ## Run In Android Studio
 

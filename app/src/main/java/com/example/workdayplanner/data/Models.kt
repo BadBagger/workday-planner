@@ -126,6 +126,20 @@ enum class ReminderType {
     FullAlarm
 }
 
+enum class TodoistPendingAction {
+    None,
+    Create,
+    Update,
+    Complete,
+    Reopen;
+
+    companion object {
+        fun fromStored(value: String?): TodoistPendingAction {
+            return runCatching { valueOf(value.orEmpty()) }.getOrDefault(None)
+        }
+    }
+}
+
 enum class AlarmSchedulingStatus {
     NotScheduled,
     Scheduled,
@@ -221,7 +235,14 @@ data class TaskItem(
     val timeZoneId: String = java.time.ZoneId.systemDefault().id,
     val createdAt: LocalDateTime = LocalDateTime.now(),
     val completed: Boolean = false,
-    val completionHistory: List<LocalDateTime> = emptyList()
+    val completionHistory: List<LocalDateTime> = emptyList(),
+    val todoistId: String? = null,
+    val todoistProjectId: String? = null,
+    val todoistDueString: String? = null,
+    val todoistRecurring: Boolean = false,
+    val todoistUpdatedAt: String? = null,
+    val durationMinutes: Int? = null,
+    val todoistPending: TodoistPendingAction = TodoistPendingAction.None
 )
 
 data class WorkNote(
@@ -349,7 +370,9 @@ data class WorkEvent(
     val notes: String = "",
     val startsAt: LocalDateTime,
     val endsAt: LocalDateTime,
-    val location: String = ""
+    val location: String = "",
+    val todoistId: String? = null,
+    val todoistPending: TodoistPendingAction = TodoistPendingAction.None
 )
 
 data class PaySettings(

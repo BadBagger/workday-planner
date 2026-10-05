@@ -10,6 +10,7 @@ import android.util.Log
 import com.example.workdayplanner.data.AlarmDelivery
 import com.example.workdayplanner.data.AlarmCancelStatus
 import com.example.workdayplanner.data.AlarmDispatchStatus
+import com.example.workdayplanner.data.ReminderType
 import com.example.workdayplanner.data.TaskItem
 import java.time.ZoneId
 
@@ -17,7 +18,8 @@ class AlarmScheduler(private val context: Context) {
     private val alarmManager = context.getSystemService(AlarmManager::class.java)
 
     fun schedule(task: TaskItem): AlarmDispatchStatus {
-        if (task.completed) return AlarmDispatchStatus.NoAlarmRequested
+        if (task.completed || task.reminderType == ReminderType.None) return AlarmDispatchStatus.NoAlarmRequested
+        if (task.todoistId != null && task.alarmAt == null) return AlarmDispatchStatus.NoAlarmRequested
         val alarmAt = task.alarmAt ?: task.deadline ?: return AlarmDispatchStatus.NoAlarmRequested
         var systemClockFallback = false
         if (task.alarmDelivery == AlarmDelivery.SystemClockAlarm) {

@@ -336,7 +336,12 @@ private object WidgetStore {
         for (index in 0 until tasks.length()) {
             val task = tasks.getJSONObject(index)
             if (task.optString("id") == taskId) {
-                task.put("completed", !task.optBoolean("completed"))
+                val nowCompleted = !task.optBoolean("completed")
+                val remoteId = task.optString("todoistId").takeIf { it.isNotBlank() && it != "null" }
+                task.put("completed", nowCompleted)
+                if (remoteId != null) {
+                    task.put("todoistPending", if (nowCompleted) "Complete" else "Reopen")
+                }
                 break
             }
         }

@@ -27,7 +27,7 @@ class PlannerRepository(context: Context) {
     }
 
     fun clearCompletedTasks() = update { state ->
-        state.copy(tasks = state.tasks.filterNot { it.completed })
+        state.copy(tasks = state.tasks.filterNot { it.completed && it.todoistPending == TodoistPendingAction.None })
     }
 
     fun addNote(note: WorkNote) = update { state ->
@@ -247,11 +247,28 @@ class PlannerRepository(context: Context) {
         state.copy(trainingItems = state.trainingItems.filterNot { it.id == trainingId })
     }
 
+    private val writeLock = Any()
+
     private fun update(block: (AppState) -> AppState) {
-        val next = block(mutableState.value)
-        mutableState.value = next
-        saveState(next)
-        PlannerWidgetUpdater.updateAll(appContext)
+        synchronized(writeLock) {
+            val next = block(mutableState.value)
+            mutableState.value = next
+            saveState(next)
+            PlannerWidgetUpdater.updateAll(appContext)
+        }
+    }
+
+    fun updateTask(taskId: String, block: (TaskItem) -> TaskItem) = update { state ->
+        state.copy(tasks = state.tasks.map { task -> if (task.id == taskId) block(task) else task })
+    }
+
+    fun updateEvent(eventId: String, block: (WorkEvent) -> WorkEvent) = update { state ->
+        state.copy(events = state.events.map { event -> if (event.id == eventId) block(event) else event })
+    }
+
+    fun applyTodoistMerge(remoteTasks: List<TodoistTask>, zoneId: java.time.ZoneId = java.time.ZoneId.systemDefault()) = update { state ->
+        val merged = TodoistSync.merge(state.tasks, state.events, remoteTasks, zoneId)
+        state.copy(tasks = merged.tasks, events = merged.events)
     }
 
     private fun loadState(): AppState {
@@ -353,6 +370,13 @@ class PlannerRepository(context: Context) {
         .put("createdAt", task.createdAt.toString())
         .put("completed", task.completed)
         .put("completionHistory", JSONArray(task.completionHistory.map(LocalDateTime::toString)))
+        .put("todoistId", task.todoistId)
+        .put("todoistProjectId", task.todoistProjectId)
+        .put("todoistDueString", task.todoistDueString)
+        .put("todoistRecurring", task.todoistRecurring)
+        .put("todoistUpdatedAt", task.todoistUpdatedAt)
+        .put("durationMinutes", task.durationMinutes)
+        .put("todoistPending", task.todoistPending.name)
 
     private fun taskFromJson(json: JSONObject) = TaskItem(
         id = json.getString("id"),
@@ -403,7 +427,18 @@ class PlannerRepository(context: Context) {
         completed = json.optBoolean("completed"),
         completionHistory = json.optJSONArray("completionHistory").toStrings().mapNotNull { value ->
             runCatching { LocalDateTime.parse(value) }.getOrNull()
-        }
+        },
+        todoistId = json.optString("todoistId").takeIf { it.isNotBlank() && it != "null" },
+        todoistProjectId = json.optString("todoistProjectId").takeIf { it.isNotBlank() && it != "null" },
+        todoistDueString = json.optString("todoistDueString").takeIf { it.isNotBlank() && it != "null" },
+        todoistRecurring = json.optBoolean("todoistRecurring", false),
+        todoistUpdatedAt = json.optString("todoistUpdatedAt").takeIf { it.isNotBlank() && it != "null" },
+        durationMinutes = if (json.has("durationMinutes") && !json.isNull("durationMinutes")) {
+            json.optInt("durationMinutes").takeIf { it > 0 }
+        } else {
+            null
+        },
+        todoistPending = TodoistPendingAction.fromStored(json.optString("todoistPending"))
     )
 
     private fun noteToJson(note: WorkNote) = JSONObject()
@@ -573,6 +608,8 @@ class PlannerRepository(context: Context) {
         .put("startsAt", event.startsAt.toString())
         .put("endsAt", event.endsAt.toString())
         .put("location", event.location)
+        .put("todoistId", event.todoistId)
+        .put("todoistPending", event.todoistPending.name)
 
     private fun eventFromJson(json: JSONObject) = WorkEvent(
         id = json.getString("id"),
@@ -580,7 +617,9 @@ class PlannerRepository(context: Context) {
         notes = json.optString("notes"),
         startsAt = LocalDateTime.parse(json.getString("startsAt")),
         endsAt = LocalDateTime.parse(json.getString("endsAt")),
-        location = json.optString("location")
+        location = json.optString("location"),
+        todoistId = json.optString("todoistId").takeIf { it.isNotBlank() && it != "null" },
+        todoistPending = TodoistPendingAction.fromStored(json.optString("todoistPending"))
     )
 
     private fun shiftToJson(shift: WorkShift) = JSONObject()

@@ -27,6 +27,17 @@ class MainActivity : ComponentActivity() {
     private var requestedTaskId by mutableStateOf<String?>(null)
     private var voiceTaskLaunchRequest by mutableStateOf(0)
 
+    override fun onStart() {
+        super.onStart()
+        viewModel.onAppForegrounded()
+        consumeTodoistRedirect(intent)
+    }
+
+    override fun onStop() {
+        viewModel.onAppBackgrounded()
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestedTaskId = intent.getStringExtra(EXTRA_OPEN_TASK_ID)
@@ -73,6 +84,14 @@ class MainActivity : ComponentActivity() {
         if (intent.action == ACTION_VOICE_TASK) {
             voiceTaskLaunchRequest += 1
         }
+        consumeTodoistRedirect(intent)
+    }
+
+    private fun consumeTodoistRedirect(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "workdayplanner" || data.host != "todoist") return
+        viewModel.completeTodoistOAuth(data.toString())
+        setIntent(Intent(this, MainActivity::class.java))
     }
 
     companion object {
