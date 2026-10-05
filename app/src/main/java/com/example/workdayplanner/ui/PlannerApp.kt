@@ -4421,23 +4421,54 @@ private fun TimecardWeeklySummaryCard(
     settings: PaySettings
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SectionHeader("Weekly timecard summary")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .width(36.dp)
+                        .height(36.dp)
+                        .background(MaterialTheme.colorScheme.secondaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Event, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Weekly summary", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Compare planned time, actual punches, and payroll notes.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (notesCount > 0) {
+                    AssistChip(onClick = {}, label = { Text("$notesCount notes") })
+                }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 TimecardMetric("Scheduled", "${scheduledWeek.paidHours.toSimpleString()} hrs", Modifier.weight(1f))
                 TimecardMetric("Actual", "${weekSummary.workedHours.toSimpleString()} hrs", Modifier.weight(1f))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 TimecardMetric("Paid", "${weekSummary.paidHours.toSimpleString()} hrs", Modifier.weight(1f))
                 TimecardMetric("Breaks", "${weekSummary.lunchHours.toSimpleString()} hrs", Modifier.weight(1f))
             }
             val gross = if (settings.hourlyRate > 0.0) " / $${weekSummary.grossPay.toMoneyString()} est." else ""
-            Text("Overtime estimate: ${weekSummary.overtimeHours.toSimpleString()} hrs$gross", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Notes/issues: $notesCount", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Overtime estimate: ${weekSummary.overtimeHours.toSimpleString()} hrs$gross", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (notesCount == 0) "No timecard issue notes saved this week." else "$notesCount note${if (notesCount == 1) "" else "s"} or issue${if (notesCount == 1) "" else "s"} saved this week.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
