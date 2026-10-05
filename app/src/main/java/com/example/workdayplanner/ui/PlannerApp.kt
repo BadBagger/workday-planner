@@ -4191,27 +4191,63 @@ private fun TimecardSection(
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth()
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        modifier = Modifier.fillMaxWidth().animateContentSize()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SectionHeader("Personal timecard", "For your personal records only.")
-            TimecardStatusBanner(state = state, entry = entry, scheduled = scheduled)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onClockIn, enabled = entry?.clockIn == null) { Text("Clock in") }
-                OutlinedButton(onClick = onStartLunch, enabled = entry?.clockIn != null && entry.lunchStart == null && entry.clockOut == null) {
-                    Text("Lunch start")
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(40.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
                 }
-                OutlinedButton(onClick = onEndLunch, enabled = entry?.lunchStart != null && entry.lunchEnd == null && entry.clockOut == null) {
-                    Text("Lunch end")
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Personal timecard", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Track your own punches, payroll notes, and weekly estimate.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-                OutlinedButton(onClick = onClockOut, enabled = entry?.clockIn != null && entry.clockOut == null) { Text("Clock out") }
+                AssistChip(onClick = {}, label = { Text(if (entry?.clockOut != null) "Done" else if (entry?.clockIn != null) "Open" else "Ready") })
             }
-            Text(
-                punchButtonHint(entry),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            TimecardStatusBanner(state = state, entry = entry, scheduled = scheduled)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Punch actions", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = onClockIn, enabled = entry?.clockIn == null) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Clock in")
+                        }
+                        OutlinedButton(onClick = onStartLunch, enabled = entry?.clockIn != null && entry.lunchStart == null && entry.clockOut == null) {
+                            Text("Lunch start")
+                        }
+                        OutlinedButton(onClick = onEndLunch, enabled = entry?.lunchStart != null && entry.lunchEnd == null && entry.clockOut == null) {
+                            Text("Lunch end")
+                        }
+                        OutlinedButton(onClick = onClockOut, enabled = entry?.clockIn != null && entry.clockOut == null) {
+                            Icon(Icons.Default.Stop, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Clock out")
+                        }
+                    }
+                    Text(
+                        punchButtonHint(entry),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             TimePunchRows(entry)
             if (summary != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
