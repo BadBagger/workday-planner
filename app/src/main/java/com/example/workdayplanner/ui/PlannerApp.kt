@@ -7489,33 +7489,76 @@ private fun ScheduleOverviewCard(state: AppState) {
     val weekEstimate = PayEstimator.estimate(weekShifts, state.paySettings)
     val weekHours = if (state.paySettings.deductUnpaidBreaks) weekEstimate.paidHours else weekEstimate.scheduledHours
     val weekHoursLabel = if (state.paySettings.deductUnpaidBreaks) "paid hrs this week" else "scheduled hrs this week"
+    val todayStatus = when {
+        today in state.daysOff -> "Day off"
+        todayShifts.isNotEmpty() -> "Workday"
+        else -> "Open"
+    }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Schedule", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-            Text(
-                when {
-                    today in state.daysOff -> "Today is marked as a day off."
-                    todayShifts.isNotEmpty() -> "Today: ${todayShifts.joinToString { it.shiftTimeLabel() }}"
-                    else -> "No shift scheduled today."
-                },
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                nextShift?.let { "Next shift ${it.timeUntilShift(now)}: ${it.date.format(dateFormatter)} at ${it.start.format(timeFormatter)}" }
-                    ?: "No upcoming shift saved.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(onClick = {}, label = { Text("${state.shifts.count { !it.date.isBefore(today) }} upcoming shifts") })
-                AssistChip(onClick = {}, label = { Text("${weekHours.toSimpleString()} $weekHoursLabel") })
-                AssistChip(onClick = {}, label = { Text("${state.daysOff.count { !it.isBefore(today) }} upcoming days off") })
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(40.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Schedule", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text("Today is ${today.format(dateFormatter)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                DashboardStatusPill(todayStatus)
             }
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        when {
+                            today in state.daysOff -> "Today is marked as a day off."
+                            todayShifts.isNotEmpty() -> todayShifts.joinToString { it.shiftTimeLabel() }
+                            else -> "No shift scheduled today."
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        nextShift?.let { "Next: ${it.date.format(shortDateFormatter)} at ${it.start.format(timeFormatter)} (${it.timeUntilShift(now)})" }
+                            ?: "No upcoming shift saved.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                ScheduleMetricCard("Upcoming", state.shifts.count { !it.date.isBefore(today) }.toString(), "shifts", Modifier.weight(1f))
+                ScheduleMetricCard("This week", weekHours.toSimpleString(), weekHoursLabel.removeSuffix(" this week"), Modifier.weight(1f))
+                ScheduleMetricCard("Days off", state.daysOff.count { !it.isBefore(today) }.toString(), "upcoming", Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScheduleMetricCard(label: String, value: String, detail: String, modifier: Modifier = Modifier) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+        modifier = modifier
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
