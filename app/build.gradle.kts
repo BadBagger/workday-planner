@@ -20,8 +20,8 @@ android {
         applicationId = "com.smithware.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 70
-        versionName = "2.50-fullscreen-policy-fix"
+        versionCode = 71
+        versionName = "2.51-deli-checklist"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -97,4 +97,5 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
 }

@@ -21,7 +21,7 @@ class WorkdayPlannerSummaryProvider : ContentProvider() {
     ): Cursor? {
         if (uri.authority != AUTHORITY || uri.lastPathSegment != PATH_SUMMARY) return null
         val appContext = context?.applicationContext ?: return emptyCursor()
-        val state = PlannerRepository(appContext).state.value
+        val state = PlannerRepository.get(appContext).state.value
         val now = LocalDateTime.now()
         val today = LocalDate.now()
         val incompleteTasks = state.tasks.filterNot { it.completed }

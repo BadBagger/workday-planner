@@ -9,7 +9,7 @@ class TaskReminderRescheduleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
         if (action !in supportedActions) return
-        val repository = PlannerRepository(context)
+        val repository = PlannerRepository.get(context)
         AlarmScheduler(context).rescheduleOpenTasks(repository.state.value.tasks)
         ShiftAlarmScheduler(context).reschedule(repository.state.value.shifts, repository.state.value.shiftAlarmSettings)
     }

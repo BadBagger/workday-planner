@@ -54,11 +54,13 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -67,7 +69,7 @@ import kotlin.math.abs
 import kotlin.math.max
 
 class PlannerViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = PlannerRepository(application)
+    private val repository = PlannerRepository.get(application)
     private val alarmScheduler = AlarmScheduler(application)
     private val shiftAlarmScheduler = ShiftAlarmScheduler(application)
     private val calendarSyncManager = CalendarSyncManager(application)
@@ -135,7 +137,8 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun deleteTask(taskId: String) {
-        state.value.tasks.firstOrNull { it.id == taskId }?.let { alarmScheduler.cancel(it) }
+        val task = state.value.tasks.firstOrNull { it.id == taskId }
+        task?.let { alarmScheduler.cancel(it) }
         repository.deleteTask(taskId)
     }
 
@@ -338,6 +341,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
             .map { it.toTrainingTask() }
             .filterNot { it.title.lowercase() in existingTitles }
             .forEach { saveTask(it) }
+    }
+
+    fun saveDeliStandards(book: com.example.workdayplanner.data.DeliStandardsBook) {
+        repository.saveDeliStandards(book)
     }
 
     fun saveEvent(event: WorkEvent) {

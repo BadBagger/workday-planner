@@ -17,7 +17,7 @@ import java.time.format.DateTimeFormatter
 class ShiftAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val shiftId = intent.getStringExtra(EXTRA_SHIFT_ID).orEmpty()
-        val repository = PlannerRepository(context)
+        val repository = PlannerRepository.get(context)
         val settings = repository.state.value.shiftAlarmSettings
         if (!settings.enabled) return
         val shift = repository.state.value.shifts.firstOrNull { it.id == shiftId } ?: return

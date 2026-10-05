@@ -12,11 +12,15 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 
-class PlannerRepository(context: Context) {
+class PlannerRepository private constructor(context: Context) {
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences("planner", Context.MODE_PRIVATE)
     private val mutableState = MutableStateFlow(loadState())
     val state: StateFlow<AppState> = mutableState
+
+    init {
+        importPostedPassportIfNeeded()
+    }
 
     fun upsertTask(task: TaskItem) = update { state ->
         state.copy(tasks = state.tasks.filterNot { it.id == task.id } + task)
@@ -28,6 +32,33 @@ class PlannerRepository(context: Context) {
 
     fun clearCompletedTasks() = update { state ->
         state.copy(tasks = state.tasks.filterNot { it.completed })
+    }
+
+    fun saveDeliStandards(book: DeliStandardsBook) = update { state ->
+        state.copy(deliStandards = book)
+    }
+
+    fun applyToDo(
+        command: ToDoCommand,
+        today: java.time.LocalDate = java.time.LocalDate.now(),
+        fields: Map<String, String?> = emptyMap()
+    ): ToDoResult {
+        var result: ToDoResult? = null
+        update { state ->
+            val applied = ToDoPush.apply(state, command, today, fields)
+            result = applied
+            applied.state
+        }
+        return result ?: throw IllegalStateException("To Do push did not apply.")
+    }
+
+    fun replaceFilePath(id: String, path: String, detectedText: String? = null) = update { state ->
+        state.copy(
+            files = state.files.map { file -> if (file.id == id) file.copy(filePath = path) else file },
+            images = state.images.map { image ->
+                if (image.id == id) image.copy(imagePath = path, detectedText = detectedText ?: image.detectedText) else image
+            }
+        )
     }
 
     fun addNote(note: WorkNote) = update { state ->
@@ -247,10 +278,31 @@ class PlannerRepository(context: Context) {
         state.copy(trainingItems = state.trainingItems.filterNot { it.id == trainingId })
     }
 
+    private val writeLock = Any()
+
     private fun update(block: (AppState) -> AppState) {
-        val next = block(mutableState.value)
+        synchronized(writeLock) {
+            val next = block(mutableState.value)
+            mutableState.value = next
+            saveState(next)
+            PlannerWidgetUpdater.updateAll(appContext)
+        }
+    }
+
+    fun updateTask(taskId: String, block: (TaskItem) -> TaskItem) = update { state ->
+        state.copy(tasks = state.tasks.map { task -> if (task.id == taskId) block(task) else task })
+    }
+
+    fun updateEvent(eventId: String, block: (WorkEvent) -> WorkEvent) = update { state ->
+        state.copy(events = state.events.map { event -> if (event.id == eventId) block(event) else event })
+    }
+
+    private fun importPostedPassportIfNeeded() {
+        if (prefs.getBoolean(PASSPORT_IMPORTED, false)) return
+        val next = mergeImportedSchedule(mutableState.value, PostedPassportSchedule.parsed())
         mutableState.value = next
         saveState(next)
+        prefs.edit().putBoolean(PASSPORT_IMPORTED, true).apply()
         PlannerWidgetUpdater.updateAll(appContext)
     }
 
@@ -261,6 +313,9 @@ class PlannerRepository(context: Context) {
             tasks = root.optJSONArray("tasks").toObjects(::taskFromJson),
             notes = root.optJSONArray("notes").toObjects(::noteFromJson),
             images = root.optJSONArray("images").toObjects(::imageFromJson),
+            files = root.optJSONArray("files").toObjects(::fileFromJson),
+            goals = root.optJSONArray("goals").toObjects(::goalFromJson),
+            deliStandards = root.optJSONObject("deliStandards")?.let(::deliStandardsFromJson) ?: DeliStandardsBook.seed(),
             events = root.optJSONArray("events").toObjects(::eventFromJson),
             shifts = root.optJSONArray("shifts").toObjects(::shiftFromJson),
             daysOff = root.optJSONArray("daysOff").toStrings().map(LocalDate::parse).toSet(),
@@ -298,6 +353,9 @@ class PlannerRepository(context: Context) {
             .put("tasks", JSONArray(state.tasks.map(::taskToJson)))
             .put("notes", JSONArray(state.notes.map(::noteToJson)))
             .put("images", JSONArray(state.images.map(::imageToJson)))
+            .put("files", JSONArray(state.files.map(::fileToJson)))
+            .put("goals", JSONArray(state.goals.map(::goalToJson)))
+            .put("deliStandards", state.deliStandards.toJson())
             .put("events", JSONArray(state.events.map(::eventToJson)))
             .put("shifts", JSONArray(state.shifts.map(::shiftToJson)))
             .put("daysOff", JSONArray(state.daysOff.map(LocalDate::toString)))
@@ -353,6 +411,8 @@ class PlannerRepository(context: Context) {
         .put("createdAt", task.createdAt.toString())
         .put("completed", task.completed)
         .put("completionHistory", JSONArray(task.completionHistory.map(LocalDateTime::toString)))
+        .put("durationMinutes", task.durationMinutes ?: JSONObject.NULL)
+        .put("goalId", task.goalId)
 
     private fun taskFromJson(json: JSONObject) = TaskItem(
         id = json.getString("id"),
@@ -403,7 +463,13 @@ class PlannerRepository(context: Context) {
         completed = json.optBoolean("completed"),
         completionHistory = json.optJSONArray("completionHistory").toStrings().mapNotNull { value ->
             runCatching { LocalDateTime.parse(value) }.getOrNull()
-        }
+        },
+        durationMinutes = if (json.has("durationMinutes") && !json.isNull("durationMinutes")) {
+            json.optInt("durationMinutes").takeIf { it > 0 }
+        } else {
+            null
+        },
+        goalId = json.optString("goalId").takeIf { it.isNotBlank() && it != "null" }
     )
 
     private fun noteToJson(note: WorkNote) = JSONObject()
@@ -573,6 +639,8 @@ class PlannerRepository(context: Context) {
         .put("startsAt", event.startsAt.toString())
         .put("endsAt", event.endsAt.toString())
         .put("location", event.location)
+        .put("repeatRule", event.repeatRule.name)
+        .put("repeatDays", JSONArray(event.repeatDays.map(DayOfWeek::name)))
 
     private fun eventFromJson(json: JSONObject) = WorkEvent(
         id = json.getString("id"),
@@ -580,7 +648,49 @@ class PlannerRepository(context: Context) {
         notes = json.optString("notes"),
         startsAt = LocalDateTime.parse(json.getString("startsAt")),
         endsAt = LocalDateTime.parse(json.getString("endsAt")),
-        location = json.optString("location")
+        location = json.optString("location"),
+        repeatRule = runCatching { RepeatRule.valueOf(json.optString("repeatRule")) }.getOrDefault(RepeatRule.None),
+        repeatDays = json.optJSONArray("repeatDays").toStrings().mapNotNull { value ->
+            runCatching { DayOfWeek.valueOf(value) }.getOrNull()
+        }.toSet()
+    )
+
+    private fun fileToJson(file: WorkFile) = JSONObject()
+        .put("id", file.id)
+        .put("title", file.title)
+        .put("filePath", file.filePath)
+        .put("mimeType", file.mimeType)
+        .put("notes", file.notes)
+        .put("tags", JSONArray(file.tags))
+        .put("createdAt", file.createdAt.toString())
+
+    private fun fileFromJson(json: JSONObject) = WorkFile(
+        id = json.getString("id"),
+        title = json.optString("title", "Work file"),
+        filePath = json.optString("filePath"),
+        mimeType = json.optString("mimeType"),
+        notes = json.optString("notes"),
+        tags = json.optJSONArray("tags").toStrings(),
+        createdAt = json.optString("createdAt").takeIf { it.isNotBlank() && it != "null" }?.let {
+            runCatching { LocalDateTime.parse(it) }.getOrNull()
+        } ?: LocalDateTime.now()
+    )
+
+    private fun goalToJson(goal: WorkGoal) = JSONObject()
+        .put("id", goal.id)
+        .put("title", goal.title)
+        .put("focus", goal.focus.name)
+        .put("notes", goal.notes)
+        .put("target", goal.target)
+        .put("dailyRequirements", JSONArray(goal.dailyRequirements))
+
+    private fun goalFromJson(json: JSONObject) = WorkGoal(
+        id = json.getString("id"),
+        title = json.optString("title"),
+        focus = WorkGoalFocus.fromStored(json.optString("focus")),
+        notes = json.optString("notes"),
+        target = json.optString("target"),
+        dailyRequirements = json.optJSONArray("dailyRequirements").toStrings()
     )
 
     private fun shiftToJson(shift: WorkShift) = JSONObject()
@@ -723,6 +833,20 @@ class PlannerRepository(context: Context) {
         importMonth = json.optString("importMonth"),
         screenshotImportsThisMonth = json.optInt("screenshotImportsThisMonth", 0).coerceAtLeast(0)
     )
+
+    companion object {
+        private const val PASSPORT_IMPORTED = "postedPassport2026Imported"
+
+        @Volatile
+        private var shared: PlannerRepository? = null
+
+        fun get(context: Context): PlannerRepository {
+            val appContext = context.applicationContext
+            return shared ?: synchronized(this) {
+                shared ?: PlannerRepository(appContext).also { shared = it }
+            }
+        }
+    }
 }
 
 private fun WorkShift.shiftCollisionKey(): String = "${date}|${start}|${end}"

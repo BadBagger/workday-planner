@@ -16,6 +16,10 @@
         </intent>
     </queries>
 
+    <permission
+        android:name="com.smithware.workdayplanner.permission.PUSH_PLAN"
+        android:protectionLevel="signature" />
+
     <application
         android:name=".WorkdayPlannerApp"
         android:allowBackup="true"
@@ -41,7 +45,8 @@
         </provider>
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop">
             <meta-data
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
@@ -50,6 +55,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <provider
+            android:name=".todo.ToDoProvider"
+            android:authorities="${applicationId}.todo"
+            android:exported="true"
+            android:permission="com.smithware.workdayplanner.permission.PUSH_PLAN" />
 
         <activity
             android:name=".alarm.TaskAlarmActivity"

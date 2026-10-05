@@ -13,6 +13,21 @@ Native Android work planner built with Kotlin, Jetpack Compose, local storage, n
 - Local-only storage with `SharedPreferences`
 - Compose Navigation across Today, Notes, Schedule, Manager, Settings, Import, and task detail screens
 - Full task/shift alarm support with local app alarms and system Clock handoff where available
+- To Do pushes tasks, events, schedules, goals, files, and the Deli Daily Standards sheet into the planner
+
+## To Do
+
+Workday Planner keeps the plan. Todoist is not used. The companion assistant To Do, signed with the same key as this app, writes straight into:
+
+`content://com.smithware.workdayplanner.todo/items`
+
+A personal build uses `content://com.smithware.workdayplanner.personal.todo/items`.
+
+Each insert is a set of fields. `kind` is `task`, `todo`, `work`, `event`, `goal`, `schedule`, `file`, or `standards`. `action` is `create`, `update`, `complete`, or `delete`. The To-do list and schedule read the same saved plan, so a push shows up while the app is open.
+
+A schedule is `kind=schedule` and `text` set to the schedule wording, including a Passport screenshot once it has been read as text. Shifts and days off land on the Schedule tab. A goal is `kind=goal` with `title`, `focus`, `target`, and `daily_requirements` (one requirement per line). A file or photo is `kind=file` with `title`, `path`, and `mime`. Photos and documents can be searched from the notes images and the saved file list.
+
+Deli Daily Standards is `kind=standards`. Use `page=daily` with `date`, `line`, `done`, `owner`, `time`, `initials`, `why`, and `who` for one of the 11 objectives. Use `page=agreements` with `item` and `answer` once something has been agreed. Use `page=tracker` with `date`, `column`, and `mark` (`Y` or `N`). The sheet is on the To-do tab and the Schedule tab. The manager and assistant can check lines and fill the fields on the phone, and To Do can update the same sheet.
 
 ## Run In Android Studio
 

@@ -137,6 +137,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.example.workdayplanner.BuildConfig
 import com.example.workdayplanner.PlannerViewModel
 import com.example.workdayplanner.TrainingImportUiState
@@ -166,7 +170,11 @@ import com.example.workdayplanner.data.TaskTimingRule
 import com.example.workdayplanner.data.WorkNote
 import com.example.workdayplanner.data.WorkNoteKind
 import com.example.workdayplanner.data.WidgetLayoutMode
+import com.example.workdayplanner.data.DeliStandardsBook
 import com.example.workdayplanner.data.ParsedSchedule
+import com.example.workdayplanner.data.PlannerDayItem
+import com.example.workdayplanner.data.PlannerDayKind
+import com.example.workdayplanner.data.PlannerDayPlan
 import com.example.workdayplanner.data.PayEstimator
 import com.example.workdayplanner.data.PayEstimate
 import com.example.workdayplanner.data.PayPeriodType
@@ -313,6 +321,7 @@ fun PlannerApp(
     val calendarMessage by viewModel.calendarMessage.collectAsStateWithLifecycle()
     val imageMessage by viewModel.imageMessage.collectAsStateWithLifecycle()
     val trainingImportState by viewModel.trainingImportState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
     val topLevel = listOf(Screen.Tasks, Screen.WorkTasks, Screen.Notes, Screen.Schedule, Screen.Manager, Screen.Settings)
     var showPremiumScreen by remember { mutableStateOf(false) }
@@ -467,7 +476,8 @@ fun PlannerApp(
                     onAddChecklist = viewModel::addChecklistTemplate,
                     onSaveVoiceTask = viewModel::saveTask,
                     onDismissImportMessage = viewModel::dismissImportMessage,
-                    onOpenPremium = ::openPremium
+                    onOpenPremium = ::openPremium,
+                    onDeliStandardsChange = viewModel::saveDeliStandards
                 )
             }
             composable(Screen.WorkTasks.route) {
@@ -497,7 +507,8 @@ fun PlannerApp(
                     onAddChecklist = viewModel::addChecklistTemplate,
                     onSaveVoiceTask = viewModel::saveTask,
                     onDismissImportMessage = viewModel::dismissImportMessage,
-                    onOpenPremium = ::openPremium
+                    onOpenPremium = ::openPremium,
+                    onDeliStandardsChange = viewModel::saveDeliStandards
                 )
             }
             composable(Screen.Notes.route) {
@@ -554,7 +565,10 @@ fun PlannerApp(
                     onRemoveDayOff = viewModel::removeDayOff,
                     onClearSchedule = viewModel::clearSchedule,
                     onImportSchedule = { navController.navigate(Screen.Import.route) },
-                    onOpenPremium = ::openPremium
+                    onOpenPremium = ::openPremium,
+                    onOpenTask = { navController.navigate("${Screen.TaskDetail.route}/$it") },
+                    onOpenEvent = { navController.navigate("${Screen.EventDetail.route}/$it") },
+                    onDeliStandardsChange = viewModel::saveDeliStandards
                 )
             }
             composable(Screen.Import.route) {
@@ -1046,7 +1060,8 @@ private fun TaskListScreen(
     onAddChecklist: (String) -> Unit,
     onSaveVoiceTask: (TaskItem) -> TaskItem,
     onDismissImportMessage: () -> Unit,
-    onOpenPremium: () -> Unit
+    onOpenPremium: () -> Unit,
+    onDeliStandardsChange: (DeliStandardsBook) -> Unit = {}
 ) {
     val today = LocalDate.now()
     val now = LocalDateTime.now()
@@ -1151,6 +1166,7 @@ private fun TaskListScreen(
                 onAddTask = onAddTask,
                 onAddRepeatingTask = onAddRepeatingTask
             )
+            DeliStandardsSection(book = state.deliStandards, today = today, onChange = onDeliStandardsChange)
             ChecklistTemplateSection(onAddChecklist = onAddChecklist)
             EmptyState("No work to-dos yet", "Add one-off tasks or build repeating work tasks here. Today stays focused on your shift.")
         }
@@ -1188,6 +1204,9 @@ private fun TaskListScreen(
                 onAddTask = onAddTask,
                 onAddRepeatingTask = onAddRepeatingTask
             )
+        }
+        if (!showDashboardHeader) item {
+            DeliStandardsSection(book = state.deliStandards, today = today, onChange = onDeliStandardsChange)
         }
         item {
             TaskFocusCard(
@@ -5139,7 +5158,20 @@ private fun TaskDetailScreen(
             timingRule = timingRule,
             carryOverBehavior = carryOverBehavior,
             alarmOffsetMinutes = alarmOffsetMinutes.toLongOrNull()?.coerceAtLeast(0) ?: 30,
-            completed = completed
+            reminderType = if (reminderEnabled) {
+                task?.reminderType?.takeIf { it != ReminderType.None } ?: ReminderType.FullAlarm
+            } else {
+                ReminderType.None
+            },
+            alarmDelivery = task?.alarmDelivery ?: AlarmDelivery.WorkdayPlannerAlarm,
+            rawVoiceTranscript = task?.rawVoiceTranscript.orEmpty(),
+            createdUsingVoice = task?.createdUsingVoice ?: false,
+            timeZoneId = task?.timeZoneId ?: java.time.ZoneId.systemDefault().id,
+            createdAt = task?.createdAt ?: LocalDateTime.now(),
+            completed = completed,
+            completionHistory = task?.completionHistory.orEmpty(),
+            durationMinutes = task?.durationMinutes,
+            goalId = task?.goalId
         )
     }
     fun requestReminderPermissionIfNeeded() {
@@ -5826,7 +5858,9 @@ private fun EventDetailScreen(event: WorkEvent?, onSave: (WorkEvent) -> Unit, on
                             notes = notes.trim(),
                             location = location.trim(),
                             startsAt = startsAt,
-                            endsAt = endsAt
+                            endsAt = endsAt,
+                            repeatRule = event?.repeatRule ?: RepeatRule.None,
+                            repeatDays = event?.repeatDays ?: emptySet()
                         )
                     )
                 }
@@ -6641,7 +6675,10 @@ private fun ScheduleScreen(
     onRemoveDayOff: (LocalDate) -> Unit,
     onClearSchedule: () -> Unit,
     onImportSchedule: () -> Unit,
-    onOpenPremium: () -> Unit
+    onOpenPremium: () -> Unit,
+    onOpenTask: (String) -> Unit,
+    onOpenEvent: (String) -> Unit,
+    onDeliStandardsChange: (DeliStandardsBook) -> Unit
 ) {
     var showAddShift by remember { mutableStateOf(false) }
     var showPatternWizard by remember { mutableStateOf(false) }
@@ -6657,6 +6694,7 @@ private fun ScheduleScreen(
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         ScheduleOverviewCard(state = state)
+        DeliStandardsSection(book = state.deliStandards, today = LocalDate.now(), onChange = onDeliStandardsChange)
         ScheduleQuickActions(
             showAddShift = showAddShift,
             onToggleAddShift = { showAddShift = !showAddShift },
@@ -6728,7 +6766,8 @@ private fun ScheduleScreen(
         if (!PremiumAccess.canUse(state, PremiumFeature.ShiftPatterns) && state.shiftPatterns.isEmpty()) {
             PremiumLockedCard(PremiumFeature.ShiftPatterns, "Manual shifts and days off stay free. Premium adds rotating patterns for schedules that repeat in cycles.", onOpenPremium)
         }
-        if (state.shifts.isEmpty() && state.daysOff.isEmpty()) {
+        val hasDatedPlans = state.events.isNotEmpty() || state.tasks.any { !it.completed && it.deadline != null }
+        if (state.shifts.isEmpty() && state.daysOff.isEmpty() && !hasDatedPlans) {
             ScheduleEmptyState(onImportSchedule = onImportSchedule, onAddShift = { showAddShift = true })
         } else {
             CurrentWeekSchedule(
@@ -6737,7 +6776,9 @@ private fun ScheduleScreen(
                     onRemoveDayOff(it)
                     scheduleMessage = "Day off removed."
                 },
-                onDeleteShift = onDeleteShift
+                onDeleteShift = onDeleteShift,
+                onOpenTask = onOpenTask,
+                onOpenEvent = onOpenEvent
             )
             NextSevenDaysSchedule(
                 state = state,
@@ -6745,7 +6786,9 @@ private fun ScheduleScreen(
                     onRemoveDayOff(it)
                     scheduleMessage = "Day off removed."
                 },
-                onDeleteShift = onDeleteShift
+                onDeleteShift = onDeleteShift,
+                onOpenTask = onOpenTask,
+                onOpenEvent = onOpenEvent
             )
         }
         OutlinedButton(
@@ -7385,7 +7428,7 @@ private fun SettingsScreen(
     onSyncCalendar: () -> Unit,
     onNotificationPermissionNeeded: () -> Unit,
     onTesterModeChanged: (Boolean) -> Unit,
-    onOpenPremium: () -> Unit
+        onOpenPremium: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
@@ -7833,7 +7876,13 @@ private fun PremiumLockedInline(feature: PremiumFeature, body: String, onOpenPre
 }
 
 @Composable
-private fun CurrentWeekSchedule(state: AppState, onRemoveDayOff: (LocalDate) -> Unit, onDeleteShift: (String) -> Unit) {
+private fun CurrentWeekSchedule(
+    state: AppState,
+    onRemoveDayOff: (LocalDate) -> Unit,
+    onDeleteShift: (String) -> Unit,
+    onOpenTask: (String) -> Unit,
+    onOpenEvent: (String) -> Unit
+) {
     val today = LocalDate.now()
     val weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     val days = (0L..6L).map { weekStart.plusDays(it) }
@@ -7843,12 +7892,20 @@ private fun CurrentWeekSchedule(state: AppState, onRemoveDayOff: (LocalDate) -> 
         dates = days,
         state = state,
         onRemoveDayOff = onRemoveDayOff,
-        onDeleteShift = onDeleteShift
+        onDeleteShift = onDeleteShift,
+        onOpenTask = onOpenTask,
+        onOpenEvent = onOpenEvent
     )
 }
 
 @Composable
-private fun NextSevenDaysSchedule(state: AppState, onRemoveDayOff: (LocalDate) -> Unit, onDeleteShift: (String) -> Unit) {
+private fun NextSevenDaysSchedule(
+    state: AppState,
+    onRemoveDayOff: (LocalDate) -> Unit,
+    onDeleteShift: (String) -> Unit,
+    onOpenTask: (String) -> Unit,
+    onOpenEvent: (String) -> Unit
+) {
     val today = LocalDate.now()
     ScheduleDaySection(
         title = "Next 7 days",
@@ -7856,7 +7913,9 @@ private fun NextSevenDaysSchedule(state: AppState, onRemoveDayOff: (LocalDate) -
         dates = (0L..6L).map { today.plusDays(it) },
         state = state,
         onRemoveDayOff = onRemoveDayOff,
-        onDeleteShift = onDeleteShift
+        onDeleteShift = onDeleteShift,
+        onOpenTask = onOpenTask,
+        onOpenEvent = onOpenEvent
     )
 }
 
@@ -7867,7 +7926,9 @@ private fun ScheduleDaySection(
     dates: List<LocalDate>,
     state: AppState,
     onRemoveDayOff: (LocalDate) -> Unit,
-    onDeleteShift: (String) -> Unit
+    onDeleteShift: (String) -> Unit,
+    onOpenTask: (String) -> Unit,
+    onOpenEvent: (String) -> Unit
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -7885,10 +7946,13 @@ private fun ScheduleDaySection(
                 ScheduleDayCard(
                     date = date,
                     shifts = state.shifts.filter { it.date == date }.sortedBy { it.start },
+                    plans = PlannerDayPlan.itemsFor(state, date),
                     isDayOff = date in state.daysOff,
                     linkedTaskCount = { shift -> state.tasks.count { it.linkedShiftId == shift.id } },
                     onRemoveDayOff = onRemoveDayOff,
-                    onDeleteShift = onDeleteShift
+                    onDeleteShift = onDeleteShift,
+                    onOpenTask = onOpenTask,
+                    onOpenEvent = onOpenEvent
                 )
             }
         }
@@ -7899,10 +7963,13 @@ private fun ScheduleDaySection(
 private fun ScheduleDayCard(
     date: LocalDate,
     shifts: List<WorkShift>,
+    plans: List<PlannerDayItem>,
     isDayOff: Boolean,
     linkedTaskCount: (WorkShift) -> Int,
     onRemoveDayOff: (LocalDate) -> Unit,
-    onDeleteShift: (String) -> Unit
+    onDeleteShift: (String) -> Unit,
+    onOpenTask: (String) -> Unit,
+    onOpenEvent: (String) -> Unit
 ) {
     val isToday = date == LocalDate.now()
     val container = when {
@@ -7939,8 +8006,39 @@ private fun ScheduleDayCard(
                     }
                 }
             }
+            if (plans.isNotEmpty()) {
+                Text("On this day", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                plans.take(4).forEach { item ->
+                    TextButton(
+                        onClick = {
+                            if (item.kind == PlannerDayKind.Event) onOpenEvent(item.id) else onOpenTask(item.id)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(item.scheduleLine(), modifier = Modifier.fillMaxWidth())
+                    }
+                }
+                if (plans.size > 4) {
+                    Text(
+                        "${plans.size - 4} more on the To-do tab",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
+}
+
+private fun PlannerDayItem.scheduleLine(): String {
+    val whenText = when {
+        start == null -> "All day"
+        end != null && end != start -> "${start.format(timeFormatter)} – ${end.format(timeFormatter)}"
+        else -> start.format(timeFormatter)
+    }
+    val repeat = repeats?.let { " · $it" }.orEmpty()
+    val kind = if (kind == PlannerDayKind.Event) "Event" else "Task"
+    return "$whenText · $title$repeat · $kind"
 }
 
 @Composable

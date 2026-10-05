@@ -126,6 +126,21 @@ enum class ReminderType {
     FullAlarm
 }
 
+enum class WorkGoalFocus(val label: String) {
+    Profit("Profit"),
+    Shrink("Shrink"),
+    Manager("Manager"),
+    General("General");
+
+    companion object {
+        fun fromStored(value: String?): WorkGoalFocus {
+            val stored = value.orEmpty()
+            return entries.firstOrNull { it.name.equals(stored, ignoreCase = true) || it.label.equals(stored, ignoreCase = true) }
+                ?: General
+        }
+    }
+}
+
 enum class AlarmSchedulingStatus {
     NotScheduled,
     Scheduled,
@@ -221,7 +236,9 @@ data class TaskItem(
     val timeZoneId: String = java.time.ZoneId.systemDefault().id,
     val createdAt: LocalDateTime = LocalDateTime.now(),
     val completed: Boolean = false,
-    val completionHistory: List<LocalDateTime> = emptyList()
+    val completionHistory: List<LocalDateTime> = emptyList(),
+    val durationMinutes: Int? = null,
+    val goalId: String? = null
 )
 
 data class WorkNote(
@@ -349,7 +366,28 @@ data class WorkEvent(
     val notes: String = "",
     val startsAt: LocalDateTime,
     val endsAt: LocalDateTime,
-    val location: String = ""
+    val location: String = "",
+    val repeatRule: RepeatRule = RepeatRule.None,
+    val repeatDays: Set<DayOfWeek> = emptySet()
+)
+
+data class WorkGoal(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val focus: WorkGoalFocus = WorkGoalFocus.General,
+    val notes: String = "",
+    val target: String = "",
+    val dailyRequirements: List<String> = emptyList()
+)
+
+data class WorkFile(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val filePath: String,
+    val mimeType: String = "",
+    val notes: String = "",
+    val tags: List<String> = emptyList(),
+    val createdAt: LocalDateTime = LocalDateTime.now()
 )
 
 data class PaySettings(
@@ -430,6 +468,9 @@ data class AppState(
     val tasks: List<TaskItem> = emptyList(),
     val notes: List<WorkNote> = emptyList(),
     val images: List<WorkImage> = emptyList(),
+    val files: List<WorkFile> = emptyList(),
+    val goals: List<WorkGoal> = emptyList(),
+    val deliStandards: DeliStandardsBook = DeliStandardsBook.seed(),
     val events: List<WorkEvent> = emptyList(),
     val shifts: List<WorkShift> = emptyList(),
     val daysOff: Set<LocalDate> = emptySet(),
