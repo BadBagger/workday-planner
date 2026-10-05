@@ -225,6 +225,14 @@ class PlannerRepository(context: Context) {
         state.copy(timecards = (state.timecards.filterNot { it.id == entry.id || it.date == entry.date } + entry).sortedByDescending { it.date })
     }
 
+    fun upsertDeliStandardRecord(record: DeliStandardDayRecord) = update { state ->
+        state.copy(
+            deliStandardRecords = (state.deliStandardRecords.filterNot { it.date == record.date } + record.copy(updatedAt = LocalDateTime.now()))
+                .sortedByDescending { it.date }
+                .take(30)
+        )
+    }
+
     fun addTrainingItems(items: List<TrainingItem>) = update { state ->
         state.copy(
             trainingItems = (state.trainingItems + items)
@@ -284,6 +292,7 @@ class PlannerRepository(context: Context) {
             shiftAlarmSettings = root.optJSONObject("shiftAlarmSettings")?.let(::shiftAlarmSettingsFromJson) ?: ShiftAlarmSettings(),
             alarmSettings = root.optJSONObject("alarmSettings")?.let(::alarmSettingsFromJson) ?: AlarmSettings(),
             timecards = root.optJSONArray("timecards").toObjects(::timecardFromJson),
+            deliStandardRecords = root.optJSONArray("deliStandardRecords").toObjects(::deliStandardRecordFromJson),
             trainingItems = root.optJSONArray("trainingItems").toObjects(::trainingItemFromJson),
             shiftTemplates = root.optJSONArray("shiftTemplates").toObjects(::shiftTemplateFromJson),
             taskTemplates = root.optJSONArray("taskTemplates").toObjects(::taskTemplateFromJson),
@@ -314,6 +323,7 @@ class PlannerRepository(context: Context) {
             .put("shiftAlarmSettings", shiftAlarmSettingsToJson(state.shiftAlarmSettings))
             .put("alarmSettings", alarmSettingsToJson(state.alarmSettings))
             .put("timecards", JSONArray(state.timecards.map(::timecardToJson)))
+            .put("deliStandardRecords", JSONArray(state.deliStandardRecords.map(::deliStandardRecordToJson)))
             .put("trainingItems", JSONArray(state.trainingItems.map(::trainingItemToJson)))
             .put("shiftTemplates", JSONArray(state.shiftTemplates.map(::shiftTemplateToJson)))
             .put("taskTemplates", JSONArray(state.taskTemplates.map(::taskTemplateToJson)))
@@ -566,6 +576,38 @@ class PlannerRepository(context: Context) {
         payIssueNote = json.optString("payIssueNote")
     )
 
+    private fun deliStandardRecordToJson(record: DeliStandardDayRecord) = JSONObject()
+        .put("date", record.date.toString())
+        .put("managerOnOpen", record.managerOnOpen)
+        .put("managerOnClose", record.managerOnClose)
+        .put("checks", JSONObject().apply {
+            record.checks.forEach { (key, value) -> put(key, value) }
+        })
+        .put("stockingScheduled", record.stockingScheduled)
+        .put("pulledFromStocking", record.pulledFromStocking)
+        .put("pulledFor", record.pulledFor)
+        .put("stockingCoveredBy", record.stockingCoveredBy)
+        .put("stockingFinishedByClose", record.stockingFinishedByClose)
+        .put("productLeftInBackRoom", record.productLeftInBackRoom)
+        .put("notes", record.notes)
+        .put("updatedAt", record.updatedAt.toString())
+
+    private fun deliStandardRecordFromJson(json: JSONObject) = DeliStandardDayRecord(
+        date = json.optString("date").takeIf { it.isNotBlank() }?.let(LocalDate::parse) ?: LocalDate.now(),
+        managerOnOpen = json.optString("managerOnOpen"),
+        managerOnClose = json.optString("managerOnClose"),
+        checks = json.optJSONObject("checks").toStringMap(),
+        stockingScheduled = json.optNullableBoolean("stockingScheduled"),
+        pulledFromStocking = json.optNullableBoolean("pulledFromStocking"),
+        pulledFor = json.optString("pulledFor"),
+        stockingCoveredBy = json.optString("stockingCoveredBy"),
+        stockingFinishedByClose = json.optNullableBoolean("stockingFinishedByClose"),
+        productLeftInBackRoom = json.optNullableBoolean("productLeftInBackRoom"),
+        notes = json.optString("notes"),
+        updatedAt = json.optString("updatedAt").takeIf { it.isNotBlank() && it != "null" }?.let(LocalDateTime::parse)
+            ?: LocalDateTime.now()
+    )
+
     private fun eventToJson(event: WorkEvent) = JSONObject()
         .put("id", event.id)
         .put("title", event.title)
@@ -745,6 +787,15 @@ private fun JSONObject?.toDayOffTypes(): Map<LocalDate, ShiftTemplateKind> {
             .getOrDefault(ShiftTemplateKind.DayOff)
         date to kind
     }.toMap()
+}
+
+private fun JSONObject?.toStringMap(): Map<String, String> {
+    if (this == null) return emptyMap()
+    return keys().asSequence().associateWith { key -> optString(key) }
+}
+
+private fun JSONObject.optNullableBoolean(key: String): Boolean? {
+    return if (has(key) && !isNull(key)) optBoolean(key) else null
 }
 
 fun mergeImportedSchedule(state: AppState, parsed: ParsedSchedule): AppState {

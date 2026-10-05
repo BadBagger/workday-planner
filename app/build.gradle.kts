@@ -11,6 +11,7 @@ val keystoreProperties = Properties().apply {
         keystorePropertiesFile.inputStream().use(::load)
     }
 }
+val hasLocalReleaseSigning = keystorePropertiesFile.exists()
 
 android {
     namespace = "com.example.workdayplanner"
@@ -44,13 +45,12 @@ android {
 
     signingConfigs {
         create("localRelease") {
-            if (!keystorePropertiesFile.exists()) {
-                throw GradleException("Release signing requires local keystore.properties. Copy keystore.properties.example and fill it with local-only values.")
+            if (hasLocalReleaseSigning) {
+                storeFile = file(keystoreProperties.getProperty("storeFile") ?: throw GradleException("Missing storeFile in keystore.properties"))
+                storePassword = keystoreProperties.getProperty("storePassword") ?: throw GradleException("Missing storePassword in keystore.properties")
+                keyAlias = keystoreProperties.getProperty("keyAlias") ?: throw GradleException("Missing keyAlias in keystore.properties")
+                keyPassword = keystoreProperties.getProperty("keyPassword") ?: throw GradleException("Missing keyPassword in keystore.properties")
             }
-            storeFile = file(keystoreProperties.getProperty("storeFile") ?: throw GradleException("Missing storeFile in keystore.properties"))
-            storePassword = keystoreProperties.getProperty("storePassword") ?: throw GradleException("Missing storePassword in keystore.properties")
-            keyAlias = keystoreProperties.getProperty("keyAlias") ?: throw GradleException("Missing keyAlias in keystore.properties")
-            keyPassword = keystoreProperties.getProperty("keyPassword") ?: throw GradleException("Missing keyPassword in keystore.properties")
         }
     }
 
@@ -73,6 +73,12 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+}
+
+gradle.taskGraph.whenReady {
+    if (!hasLocalReleaseSigning && allTasks.any { it.name.contains("Release") }) {
+        throw GradleException("Release signing requires local keystore.properties. Copy keystore.properties.example and fill it with local-only values.")
     }
 }
 

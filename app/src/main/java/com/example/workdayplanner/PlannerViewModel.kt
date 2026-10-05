@@ -21,6 +21,7 @@ import com.example.workdayplanner.data.PaySettings
 import com.example.workdayplanner.data.PremiumAccess
 import com.example.workdayplanner.data.PlannerRepository
 import com.example.workdayplanner.data.CarryOverBehavior
+import com.example.workdayplanner.data.DeliStandardDayRecord
 import com.example.workdayplanner.data.RepeatRule
 import com.example.workdayplanner.data.ReminderType
 import com.example.workdayplanner.data.ScheduleTextParser
@@ -518,6 +519,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveTimecardEntry(entry: TimecardEntry) {
         repository.upsertTimecard(entry)
+    }
+
+    fun saveDeliStandardRecord(record: DeliStandardDayRecord) {
+        repository.upsertDeliStandardRecord(record)
     }
 
     fun syncShiftsToCalendar() {

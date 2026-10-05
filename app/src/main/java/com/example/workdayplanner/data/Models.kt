@@ -426,6 +426,21 @@ data class TimecardEntry(
     val payIssueNote: String = ""
 )
 
+data class DeliStandardDayRecord(
+    val date: LocalDate = LocalDate.now(),
+    val managerOnOpen: String = "",
+    val managerOnClose: String = "",
+    val checks: Map<String, String> = emptyMap(),
+    val stockingScheduled: Boolean? = null,
+    val pulledFromStocking: Boolean? = null,
+    val pulledFor: String = "",
+    val stockingCoveredBy: String = "",
+    val stockingFinishedByClose: Boolean? = null,
+    val productLeftInBackRoom: Boolean? = null,
+    val notes: String = "",
+    val updatedAt: LocalDateTime = LocalDateTime.now()
+)
+
 data class AppState(
     val tasks: List<TaskItem> = emptyList(),
     val notes: List<WorkNote> = emptyList(),
@@ -444,6 +459,7 @@ data class AppState(
     val shiftAlarmSettings: ShiftAlarmSettings = ShiftAlarmSettings(),
     val alarmSettings: AlarmSettings = AlarmSettings(),
     val timecards: List<TimecardEntry> = emptyList(),
+    val deliStandardRecords: List<DeliStandardDayRecord> = emptyList(),
     val trainingItems: List<TrainingItem> = emptyList(),
     val shiftTemplates: List<ShiftTemplate> = emptyList(),
     val taskTemplates: List<TaskTemplate> = emptyList(),

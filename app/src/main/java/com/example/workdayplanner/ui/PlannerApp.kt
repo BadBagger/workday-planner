@@ -151,6 +151,7 @@ import com.example.workdayplanner.data.AppearanceMode
 import com.example.workdayplanner.data.AppThemeStyle
 import com.example.workdayplanner.data.AppState
 import com.example.workdayplanner.data.CarryOverBehavior
+import com.example.workdayplanner.data.DeliStandardDayRecord
 import com.example.workdayplanner.data.LinkedShiftType
 import com.example.workdayplanner.data.RepeatRule
 import com.example.workdayplanner.data.ReminderType
@@ -525,7 +526,8 @@ fun PlannerApp(
                     onToggleComplete = viewModel::toggleTrainingComplete,
                     onDelete = viewModel::deleteTrainingItem,
                     onCreateTask = viewModel::createTaskFromTrainingItem,
-                    onCreateFollowUps = viewModel::createTrainingFollowUpTasks
+                    onCreateFollowUps = viewModel::createTrainingFollowUpTasks,
+                    onSaveDeliStandards = viewModel::saveDeliStandardRecord
                 )
             }
             composable(Screen.WeeklyReview.route) {
@@ -1584,7 +1586,8 @@ private fun ManagerScreen(
     onToggleComplete: (String) -> Unit,
     onDelete: (String) -> Unit,
     onCreateTask: (String) -> Unit,
-    onCreateFollowUps: () -> Unit
+    onCreateFollowUps: () -> Unit,
+    onSaveDeliStandards: (DeliStandardDayRecord) -> Unit
 ) {
     val today = LocalDate.now()
     var searchText by remember { mutableStateOf("") }
@@ -1634,6 +1637,13 @@ private fun ManagerScreen(
                 onViewOverdue = { trainingView = TrainingView.Overdue },
                 onViewDueSoon = { trainingView = TrainingView.DueSoon },
                 onCreateFollowUps = onCreateFollowUps
+            )
+        }
+        item {
+            DeliStandardsCard(
+                state = state,
+                today = today,
+                onSave = onSaveDeliStandards
             )
         }
         item {
@@ -1699,6 +1709,188 @@ private fun ManagerScreen(
                     onToggleComplete = { onToggleComplete(item.id) },
                     onCreateTask = { onCreateTask(item.id) },
                     onDelete = { onDelete(item.id) }
+                )
+            }
+        }
+    }
+}
+
+private val deliStandardColumns = listOf(
+    "Orders",
+    "Counts",
+    "Back stock worked",
+    "Truck worked",
+    "Back room clear",
+    "Floor stocked",
+    "Production",
+    "Clean",
+    "Breaks on time",
+    "Stocker kept in role"
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DeliStandardsCard(
+    state: AppState,
+    today: LocalDate,
+    onSave: (DeliStandardDayRecord) -> Unit
+) {
+    val saved = state.deliStandardRecords.firstOrNull { it.date == today } ?: DeliStandardDayRecord(date = today)
+    var managerOnOpen by remember(saved.updatedAt) { mutableStateOf(saved.managerOnOpen) }
+    var managerOnClose by remember(saved.updatedAt) { mutableStateOf(saved.managerOnClose) }
+    var checks by remember(saved.updatedAt) { mutableStateOf(saved.checks) }
+    var stockingScheduled by remember(saved.updatedAt) { mutableStateOf(saved.stockingScheduled) }
+    var pulledFromStocking by remember(saved.updatedAt) { mutableStateOf(saved.pulledFromStocking) }
+    var pulledFor by remember(saved.updatedAt) { mutableStateOf(saved.pulledFor) }
+    var stockingCoveredBy by remember(saved.updatedAt) { mutableStateOf(saved.stockingCoveredBy) }
+    var stockingFinished by remember(saved.updatedAt) { mutableStateOf(saved.stockingFinishedByClose) }
+    var productLeft by remember(saved.updatedAt) { mutableStateOf(saved.productLeftInBackRoom) }
+    var notes by remember(saved.updatedAt) { mutableStateOf(saved.notes) }
+    val trackerStart = today.minusDays(13)
+    val trackerRecords = state.deliStandardRecords.filter { !it.date.isBefore(trackerStart) && !it.date.isAfter(today) }
+    val missCounts = deliStandardColumns.associateWith { column ->
+        trackerRecords.count { record -> record.checks[column] == "N" }
+    }
+
+    fun currentRecord() = DeliStandardDayRecord(
+        date = today,
+        managerOnOpen = managerOnOpen.trim(),
+        managerOnClose = managerOnClose.trim(),
+        checks = checks.filterValues { it.isNotBlank() },
+        stockingScheduled = stockingScheduled,
+        pulledFromStocking = pulledFromStocking,
+        pulledFor = pulledFor.trim(),
+        stockingCoveredBy = stockingCoveredBy.trim(),
+        stockingFinishedByClose = stockingFinished,
+        productLeftInBackRoom = productLeft,
+        notes = notes.trim()
+    )
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader("Deli standards", "Daily sheet and two-week N-count tracker.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = managerOnOpen,
+                    onValueChange = { managerOnOpen = it },
+                    label = { Text("Manager on open") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = managerOnClose,
+                    onValueChange = { managerOnClose = it },
+                    label = { Text("Manager on close") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                deliStandardColumns.forEach { column ->
+                    DeliStandardCheckRow(
+                        label = column,
+                        value = checks[column],
+                        onChange = { value -> checks = checks + (column to value) }
+                    )
+                }
+            }
+            Text("Stocking coverage", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            DeliBooleanRow("Stocker scheduled?", stockingScheduled) { stockingScheduled = it }
+            DeliBooleanRow("Pulled from stocking?", pulledFromStocking) { pulledFromStocking = it }
+            OutlinedTextField(
+                value = pulledFor,
+                onValueChange = { pulledFor = it },
+                label = { Text("If pulled: to do what?") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = stockingCoveredBy,
+                onValueChange = { stockingCoveredBy = it },
+                label = { Text("Who covered stocking?") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            DeliBooleanRow("Stocking finished by close?", stockingFinished) { stockingFinished = it }
+            DeliBooleanRow("Product left in back room?", productLeft) { productLeft = it }
+            OutlinedTextField(
+                value = notes,
+                onValueChange = { notes = it },
+                label = { Text("Notes / handoff to next shift") },
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth()
+            )
+            DeliTrackerSummary(missCounts = missCounts, recordCount = trackerRecords.size)
+            Button(onClick = { onSave(currentRecord()) }, modifier = Modifier.fillMaxWidth()) {
+                Text("Save deli standards")
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DeliStandardCheckRow(label: String, value: String?, onChange: (String) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("Y", "N").forEach { option ->
+                FilterChip(
+                    selected = value == option,
+                    onClick = { onChange(if (value == option) "" else option) },
+                    label = { Text(option) }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DeliBooleanRow(label: String, value: Boolean?, onChange: (Boolean?) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(true to "Yes", false to "No").forEach { (option, text) ->
+                FilterChip(
+                    selected = value == option,
+                    onClick = { onChange(if (value == option) null else option) },
+                    label = { Text(text) }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DeliTrackerSummary(missCounts: Map<String, Int>, recordCount: Int) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "Two-week tracker: $recordCount saved day${if (recordCount == 1) "" else "s"}",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            missCounts.forEach { (column, misses) ->
+                AssistChip(
+                    onClick = {},
+                    label = { Text("$column: $misses N") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = if (misses > 0) MaterialTheme.colorScheme.warningContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        labelColor = if (misses > 0) MaterialTheme.colorScheme.onWarningContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 )
             }
         }
