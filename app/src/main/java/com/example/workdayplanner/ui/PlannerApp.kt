@@ -8031,25 +8031,80 @@ private fun ShiftPatternSection(
     onOpenPremium: () -> Unit
 ) {
     if (patterns.isEmpty()) return
-    Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Shift patterns", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(38.dp)
+                        .height(38.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Shift patterns", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("${patterns.size} saved repeating schedule${if (patterns.size == 1) "" else "s"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                AssistChip(onClick = {}, label = { Text(if (premiumUnlocked) "Editable" else "Locked") })
+            }
             if (!premiumUnlocked) {
                 PremiumLockedInline(PremiumFeature.ShiftPatterns, "Existing generated shifts remain visible. Premium is needed to create or resume patterns.", onOpenPremium)
             }
             patterns.sortedBy { it.startDate }.forEach { pattern ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.weight(1f)) {
-                        Text(pattern.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "${pattern.cycleLength}-day cycle from ${pattern.startDate.format(dateFormatter)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(checked = pattern.enabled, onCheckedChange = { if (premiumUnlocked) onSetEnabled(pattern.id, it) })
-                    TextButton(onClick = { onDelete(pattern.id) }) { Text("Delete") }
+                ShiftPatternSummaryCard(
+                    pattern = pattern,
+                    premiumUnlocked = premiumUnlocked,
+                    onSetEnabled = { enabled -> onSetEnabled(pattern.id, enabled) },
+                    onDelete = { onDelete(pattern.id) }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ShiftPatternSummaryCard(
+    pattern: ShiftPattern,
+    premiumUnlocked: Boolean,
+    onSetEnabled: (Boolean) -> Unit,
+    onDelete: () -> Unit
+) {
+    val workDays = pattern.days.count { it.kind == ShiftPatternDayKind.Work }
+    val offDays = pattern.days.count { it.kind == ShiftPatternDayKind.Off }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(pattern.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${pattern.cycleLength}-day cycle from ${pattern.startDate.format(dateFormatter)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+                Switch(checked = pattern.enabled, onCheckedChange = { if (premiumUnlocked) onSetEnabled(it) })
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(onClick = {}, label = { Text("$workDays work") })
+                AssistChip(onClick = {}, label = { Text("$offDays off") })
+                AssistChip(onClick = {}, label = { Text(if (pattern.enabled) "Enabled" else "Paused") })
+                pattern.endDate?.let { AssistChip(onClick = {}, label = { Text("Ends ${it.format(shortDateFormatter)}") }) }
+            }
+            TextButton(onClick = onDelete, modifier = Modifier.align(Alignment.End)) {
+                Icon(Icons.Default.Delete, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("Delete")
             }
         }
     }
