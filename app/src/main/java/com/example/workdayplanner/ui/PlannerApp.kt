@@ -5337,47 +5337,72 @@ private fun WorkNoteCard(
     onArchive: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val noteColor = note.kind.noteKindColor()
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
-        modifier = Modifier.fillMaxWidth()
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(note.title.ifBlank { note.kind.label }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text("${note.kind.label} | ${note.date.format(dateFormatter)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (note.pinned) AssistChip(onClick = {}, label = { Text("Pinned") })
-            }
-            Text(note.text, style = MaterialTheme.typography.bodyMedium)
-            if (note.tags.isNotEmpty()) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    note.tags.forEach { tag ->
-                        AssistChip(onClick = {}, label = { Text(tag) })
+        Row(Modifier.padding(12.dp).fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(
+                Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(noteColor)
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(note.title.ifBlank { note.kind.label }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(note.date.format(dateFormatter), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    AssistChip(
+                        onClick = {},
+                        label = { Text(note.kind.label) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = noteColor.copy(alpha = 0.16f),
+                            labelColor = noteColor
+                        )
+                    )
+                    if (note.pinned) {
+                        AssistChip(
+                            onClick = {},
+                            label = { Text("Pinned") },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        )
                     }
                 }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onMakeTask, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Task")
+                Text(note.text, style = MaterialTheme.typography.bodyMedium)
+                if (note.tags.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        note.tags.forEach { tag ->
+                            AssistChip(onClick = {}, label = { Text(tag) })
+                        }
+                    }
                 }
-                OutlinedButton(onClick = onMakeChecklist, modifier = Modifier.weight(1f)) {
-                    Text("Checklist")
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onTogglePinned, modifier = Modifier.weight(1f)) {
-                    Text(if (note.pinned) "Unpin" else "Pin")
-                }
-                OutlinedButton(onClick = onArchive, modifier = Modifier.weight(1f)) {
-                    Text("Archive")
-                }
-                OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Delete, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Delete")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onMakeTask) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Task")
+                    }
+                    OutlinedButton(onClick = onMakeChecklist) {
+                        Text("Checklist")
+                    }
+                    OutlinedButton(onClick = onTogglePinned) {
+                        Text(if (note.pinned) "Unpin" else "Pin")
+                    }
+                    OutlinedButton(onClick = onArchive) {
+                        Text("Archive")
+                    }
+                    TextButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Delete")
+                    }
                 }
             }
         }
@@ -6447,6 +6472,26 @@ private fun TaskCategory.categoryColor(): Color = when (this) {
     TaskCategory.Prep -> MaterialTheme.colorScheme.warning
     TaskCategory.Admin -> MaterialTheme.colorScheme.secondary
     TaskCategory.Personal -> MaterialTheme.colorScheme.onSurfaceVariant
+}
+
+@Composable
+private fun WorkNoteKind.noteKindColor(): Color = when (this) {
+    WorkNoteKind.Order,
+    WorkNoteKind.OrderNote,
+    WorkNoteKind.TruckNote,
+    WorkNoteKind.InventoryNote -> MaterialTheme.colorScheme.tertiary
+    WorkNoteKind.Issue,
+    WorkNoteKind.PayTimecardNote -> MaterialTheme.colorScheme.error
+    WorkNoteKind.Manager,
+    WorkNoteKind.ManagerHandoff,
+    WorkNoteKind.EmployeeTrainingNote,
+    WorkNoteKind.Meeting -> MaterialTheme.colorScheme.secondary
+    WorkNoteKind.ReminderNote,
+    WorkNoteKind.FollowUp -> MaterialTheme.colorScheme.warning
+    WorkNoteKind.Cleaning -> MaterialTheme.colorScheme.success
+    WorkNoteKind.Customer -> MaterialTheme.colorScheme.primary
+    WorkNoteKind.ShiftNote,
+    WorkNoteKind.General -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 @Composable
