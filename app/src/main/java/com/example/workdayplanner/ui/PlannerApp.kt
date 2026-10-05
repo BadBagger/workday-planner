@@ -6601,6 +6601,18 @@ private fun WorkNoteKind.noteKindColor(): Color = when (this) {
 }
 
 @Composable
+private fun WorkShift.shiftAccentColor(): Color {
+    val label = label.lowercase()
+    return when {
+        "truck" in label || "order" in label || "inventory" in label -> MaterialTheme.colorScheme.tertiary
+        "close" in label || "clean" in label -> MaterialTheme.colorScheme.success
+        "open" in label || "prep" in label -> MaterialTheme.colorScheme.warning
+        "manager" in label || "training" in label -> MaterialTheme.colorScheme.secondary
+        else -> MaterialTheme.colorScheme.primary
+    }
+}
+
+@Composable
 private fun TaskScheduleLabel.scheduleLabelColor(): Color = when (this) {
     TaskScheduleLabel.BeforeWork -> MaterialTheme.colorScheme.primary
     TaskScheduleLabel.AfterWork -> MaterialTheme.colorScheme.secondary
@@ -8717,15 +8729,16 @@ private fun ScheduleDaySection(
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.weight(1f)) {
                     Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                AssistChip(onClick = {}, label = { Text("${dates.size} days") })
             }
             dates.forEach { date ->
                 ScheduleDayCard(
@@ -8751,6 +8764,11 @@ private fun ScheduleDayCard(
     onDeleteShift: (String) -> Unit
 ) {
     val isToday = date == LocalDate.now()
+    val status = when {
+        isDayOff -> "Day off"
+        shifts.isNotEmpty() -> "${shifts.size} shift${if (shifts.size == 1) "" else "s"}"
+        else -> "Open"
+    }
     val container = when {
         isToday -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
         else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)
@@ -8770,6 +8788,7 @@ private fun ScheduleDayCard(
                     )
                     if (isToday) Text("Today", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 }
+                AssistChip(onClick = {}, label = { Text(status) })
                 if (isDayOff) {
                     TextButton(onClick = { onRemoveDayOff(date) }) { Text("Remove") }
                 }
@@ -8777,7 +8796,7 @@ private fun ScheduleDayCard(
             when {
                 isDayOff -> WorkdayAnimatedVisibility(visible = true) { DayOffCard() }
                 shifts.isEmpty() -> WorkdayAnimatedVisibility(visible = true) {
-                    Text("No shift saved", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ScheduleEmptyDayPanel()
                 }
                 else -> shifts.forEach { shift ->
                     WorkdayAnimatedVisibility(visible = true) {
@@ -8790,12 +8809,36 @@ private fun ScheduleDayCard(
 }
 
 @Composable
+private fun ScheduleEmptyDayPanel() {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.62f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            "No shift saved",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(12.dp)
+        )
+    }
+}
+
+@Composable
 private fun DayOffCard() {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.16f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Text("Day off", modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+        Row(
+            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(Icons.Default.Event, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            Text("Day off", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+        }
     }
 }
 
@@ -8806,31 +8849,43 @@ private fun ShiftSummaryCard(shift: WorkShift, linkedTaskCount: Int, onDelete: (
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
         modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    Modifier
+                        .width(4.dp)
+                        .height(46.dp)
+                        .background(shift.shiftAccentColor())
+                )
                 Column(Modifier.weight(1f)) {
                     Text(shift.label.ifBlank { "Work" }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text(shift.date.format(dateFormatter), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("${shift.start.format(timeFormatter)} - ${shift.end.format(timeFormatter)}", style = MaterialTheme.typography.bodyLarge)
+                    if (shift.location.isNotBlank()) {
+                        Text(shift.location, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(shift.durationLabel(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    AssistChip(onClick = {}, label = { Text(shift.durationLabel()) })
                     if (onDelete != null) {
                         TextButton(onClick = onDelete) { Text("Delete") }
                     }
                 }
             }
-            val detail = listOf(shift.location, shift.notes).filter { it.isNotBlank() }.joinToString(" - ")
-            if (detail.isNotBlank()) {
-                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (shift.notes.isNotBlank()) {
+                Text(shift.notes, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text(
-                "$linkedTaskCount linked ${if (linkedTaskCount == 1) "task" else "tasks"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            if (shift.patternId != null) {
-                Text("Generated from shift pattern", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(onClick = {}, label = { Text("$linkedTaskCount linked ${if (linkedTaskCount == 1) "task" else "tasks"}") })
+                if (shift.patternId != null) {
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("Pattern") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    )
+                }
             }
         }
     }
