@@ -343,6 +343,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
             .forEach { saveTask(it) }
     }
 
+    fun saveDeliStandards(book: com.example.workdayplanner.data.DeliStandardsBook) {
+        repository.saveDeliStandards(book)
+    }
+
     fun saveEvent(event: WorkEvent) {
         repository.upsertEvent(event)
     }

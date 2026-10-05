@@ -1,5 +1,6 @@
 package com.example.workdayplanner.data
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -81,5 +82,30 @@ class DeliStandardsTest {
         assertEquals("N", updated.tracker.first { it.date == LocalDate.of(2026, 10, 6) }.marks["counts"])
         assertEquals(1, updated.totalN("counts"))
         assertEquals(0, updated.totalN("orders"))
+    }
+
+    @Test
+    fun aCheckedLineAndYesNoAnswerSurviveASave() {
+        val day = LocalDate.of(2026, 10, 4)
+        val sheet = DeliStandardsBook.seed().sheet(day).copy(
+            managerOnOpen = "Kyle",
+            stockerScheduled = "yes",
+            handoff = "Slicer left for the opener",
+            lines = DeliStandardsBook.seed().sheet(day).lines.map { line ->
+                if (line.number == 1) line.copy(done = true, owner = "Kyle", time = "9:10", initials = "KH") else line
+            }
+        )
+        val book = DeliStandardsBook.seed().copy(sheets = mapOf(day to sheet))
+        val restored = deliStandardsFromJson(JSONObject(book.toJson().toString()))
+        val saved = restored.sheet(day)
+
+        assertEquals(11, saved.lines.size)
+        assertTrue(saved.lines.first().done)
+        assertEquals("Kyle", saved.lines.first().owner)
+        assertEquals("9:10", saved.lines.first().time)
+        assertEquals("KH", saved.lines.first().initials)
+        assertEquals("yes", saved.stockerScheduled)
+        assertEquals("Slicer left for the opener", saved.handoff)
+        assertFalse(saved.lines[1].done)
     }
 }

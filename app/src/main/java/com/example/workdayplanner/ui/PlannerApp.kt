@@ -170,6 +170,7 @@ import com.example.workdayplanner.data.TaskTimingRule
 import com.example.workdayplanner.data.WorkNote
 import com.example.workdayplanner.data.WorkNoteKind
 import com.example.workdayplanner.data.WidgetLayoutMode
+import com.example.workdayplanner.data.DeliStandardsBook
 import com.example.workdayplanner.data.ParsedSchedule
 import com.example.workdayplanner.data.PlannerDayItem
 import com.example.workdayplanner.data.PlannerDayKind
@@ -475,7 +476,8 @@ fun PlannerApp(
                     onAddChecklist = viewModel::addChecklistTemplate,
                     onSaveVoiceTask = viewModel::saveTask,
                     onDismissImportMessage = viewModel::dismissImportMessage,
-                    onOpenPremium = ::openPremium
+                    onOpenPremium = ::openPremium,
+                    onDeliStandardsChange = viewModel::saveDeliStandards
                 )
             }
             composable(Screen.WorkTasks.route) {
@@ -505,7 +507,8 @@ fun PlannerApp(
                     onAddChecklist = viewModel::addChecklistTemplate,
                     onSaveVoiceTask = viewModel::saveTask,
                     onDismissImportMessage = viewModel::dismissImportMessage,
-                    onOpenPremium = ::openPremium
+                    onOpenPremium = ::openPremium,
+                    onDeliStandardsChange = viewModel::saveDeliStandards
                 )
             }
             composable(Screen.Notes.route) {
@@ -564,7 +567,8 @@ fun PlannerApp(
                     onImportSchedule = { navController.navigate(Screen.Import.route) },
                     onOpenPremium = ::openPremium,
                     onOpenTask = { navController.navigate("${Screen.TaskDetail.route}/$it") },
-                    onOpenEvent = { navController.navigate("${Screen.EventDetail.route}/$it") }
+                    onOpenEvent = { navController.navigate("${Screen.EventDetail.route}/$it") },
+                    onDeliStandardsChange = viewModel::saveDeliStandards
                 )
             }
             composable(Screen.Import.route) {
@@ -1056,7 +1060,8 @@ private fun TaskListScreen(
     onAddChecklist: (String) -> Unit,
     onSaveVoiceTask: (TaskItem) -> TaskItem,
     onDismissImportMessage: () -> Unit,
-    onOpenPremium: () -> Unit
+    onOpenPremium: () -> Unit,
+    onDeliStandardsChange: (DeliStandardsBook) -> Unit = {}
 ) {
     val today = LocalDate.now()
     val now = LocalDateTime.now()
@@ -1161,7 +1166,7 @@ private fun TaskListScreen(
                 onAddTask = onAddTask,
                 onAddRepeatingTask = onAddRepeatingTask
             )
-            DeliStandardsSection(book = state.deliStandards, today = today)
+            DeliStandardsSection(book = state.deliStandards, today = today, onChange = onDeliStandardsChange)
             ChecklistTemplateSection(onAddChecklist = onAddChecklist)
             EmptyState("No work to-dos yet", "Add one-off tasks or build repeating work tasks here. Today stays focused on your shift.")
         }
@@ -1201,7 +1206,7 @@ private fun TaskListScreen(
             )
         }
         if (!showDashboardHeader) item {
-            DeliStandardsSection(book = state.deliStandards, today = today)
+            DeliStandardsSection(book = state.deliStandards, today = today, onChange = onDeliStandardsChange)
         }
         item {
             TaskFocusCard(
@@ -6672,7 +6677,8 @@ private fun ScheduleScreen(
     onImportSchedule: () -> Unit,
     onOpenPremium: () -> Unit,
     onOpenTask: (String) -> Unit,
-    onOpenEvent: (String) -> Unit
+    onOpenEvent: (String) -> Unit,
+    onDeliStandardsChange: (DeliStandardsBook) -> Unit
 ) {
     var showAddShift by remember { mutableStateOf(false) }
     var showPatternWizard by remember { mutableStateOf(false) }
@@ -6688,7 +6694,7 @@ private fun ScheduleScreen(
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         ScheduleOverviewCard(state = state)
-        DeliStandardsSection(book = state.deliStandards, today = LocalDate.now())
+        DeliStandardsSection(book = state.deliStandards, today = LocalDate.now(), onChange = onDeliStandardsChange)
         ScheduleQuickActions(
             showAddShift = showAddShift,
             onToggleAddShift = { showAddShift = !showAddShift },

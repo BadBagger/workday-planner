@@ -34,6 +34,10 @@ class PlannerRepository private constructor(context: Context) {
         state.copy(tasks = state.tasks.filterNot { it.completed })
     }
 
+    fun saveDeliStandards(book: DeliStandardsBook) = update { state ->
+        state.copy(deliStandards = book)
+    }
+
     fun applyToDo(
         command: ToDoCommand,
         today: java.time.LocalDate = java.time.LocalDate.now(),

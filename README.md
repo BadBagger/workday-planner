@@ -27,7 +27,7 @@ Each insert is a set of fields. `kind` is `task`, `todo`, `work`, `event`, `goal
 
 A schedule is `kind=schedule` and `text` set to the schedule wording, including a Passport screenshot once it has been read as text. Shifts and days off land on the Schedule tab. A goal is `kind=goal` with `title`, `focus`, `target`, and `daily_requirements` (one requirement per line). A file or photo is `kind=file` with `title`, `path`, and `mime`. Photos and documents can be searched from the notes images and the saved file list.
 
-Deli Daily Standards is `kind=standards`. Use `page=daily` with `date`, `line`, `done`, `owner`, `time`, `initials`, `why`, and `who` for one of the 11 objectives. Use `page=agreements` with `item` and `answer` once something has been agreed. Use `page=tracker` with `date`, `column`, and `mark` (`Y` or `N`). The sheet is on the To-do tab and the Schedule tab. Kyle does not type it in.
+Deli Daily Standards is `kind=standards`. Use `page=daily` with `date`, `line`, `done`, `owner`, `time`, `initials`, `why`, and `who` for one of the 11 objectives. Use `page=agreements` with `item` and `answer` once something has been agreed. Use `page=tracker` with `date`, `column`, and `mark` (`Y` or `N`). The sheet is on the To-do tab and the Schedule tab. The manager and assistant can check lines and fill the fields on the phone, and To Do can update the same sheet.
 
 ## Run In Android Studio
 
