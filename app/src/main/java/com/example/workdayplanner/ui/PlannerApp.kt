@@ -8135,10 +8135,33 @@ private fun ShiftPatternWizard(
         state.shifts.any { existing -> existing.date == previewShift.date && existing.start == previewShift.start && existing.end == previewShift.end }
     }
 
-    Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), modifier = Modifier.fillMaxWidth()) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+        modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))
+    ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Shift Pattern", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("Step 1: choose a preset, then adjust the cycle before saving.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(40.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Build shift pattern", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text("Choose a preset, tune the cycle, then preview the next 30 days.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(onClick = {}, label = { Text("${normalizedPattern.cycleLength} day cycle") })
+                AssistChip(onClick = {}, label = { Text("${preview.shifts.size} shifts") })
+                AssistChip(onClick = {}, label = { Text("${preview.daysOff.size} days off") })
+            }
+            Text("Preset", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 presetNames.forEach { preset ->
                     OutlinedButton(onClick = {
@@ -8165,14 +8188,12 @@ private fun ShiftPatternWizard(
             if (hasEndDate) {
                 DateOnlyRow("End date", normalizedPattern.endDate ?: normalizedPattern.startDate.plusMonths(1), onChanged = { pattern = pattern.copy(endDate = it) })
             }
-            Text("Step 2: set each cycle day.", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text("Cycle days", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             normalizedPattern.days.forEach { day ->
                 ShiftPatternDayEditor(day = day, onChange = { changed ->
                     pattern = pattern.copy(days = normalizedPattern.days.map { if (it.index == changed.index) changed else it })
                 })
             }
-            Text("Step 3: preview the next 30 days.", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Text("${preview.shifts.size} shifts and ${preview.daysOff.size} days off will be generated.", style = MaterialTheme.typography.bodyMedium)
             if (duplicateCount > 0) {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f))) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -8240,15 +8261,28 @@ private fun ShiftPatternDayEditor(day: ShiftPatternDay, onChange: (ShiftPatternD
 @Composable
 private fun ShiftPatternPreviewList(preview: com.example.workdayplanner.data.ShiftPatternPreview) {
     val datedItems = (preview.shifts.map { it.date } + preview.daysOff).distinct().sorted().take(30)
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("30-day preview", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text("${preview.shifts.size} shifts and ${preview.daysOff.size} days off will be generated.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             datedItems.take(10).forEach { date ->
                 val shift = preview.shifts.firstOrNull { it.date == date }
-                Text(
-                    shift?.let { "${date.format(shortDateFormatter)} ${it.label}: ${it.start.format(timeFormatter)} - ${it.end.format(timeFormatter)}" }
-                        ?: "${date.format(shortDateFormatter)} Day off",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    AssistChip(onClick = {}, label = { Text(date.format(shortDateFormatter)) })
+                    Text(
+                        shift?.let { "${it.label}: ${it.start.format(timeFormatter)} - ${it.end.format(timeFormatter)}" } ?: "Day off",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
             if (datedItems.size > 10) {
                 Text("+${datedItems.size - 10} more days in preview", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
