@@ -7217,20 +7217,42 @@ private fun CalendarSyncSection(
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Google Calendar sync", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Sync imported shifts to a calendar on this phone. Pick your Google calendar to have it show up in Google Calendar.",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(38.dp)
+                        .height(38.dp)
+                        .background(MaterialTheme.colorScheme.secondaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Event, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Google Calendar sync", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Send saved shifts to a writable calendar on this phone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                AssistChip(
+                    onClick = {},
+                    label = { Text(if (unlocked) "Available" else "Premium") }
+                )
+            }
             if (!unlocked) {
                 PremiumLockedInline(PremiumFeature.CalendarSync, "Your schedule stays local. Premium unlocks calendar export and sync.", onOpenPremium)
                 return@Column
             }
             if (!hasCalendarPermission) {
+                CalendarSyncStatePanel(
+                    title = "Calendar permission needed",
+                    body = "Allow calendar access once, then choose where Workday Planner should place shifts."
+                )
                 Button(
                     onClick = {
                         permissionLauncher.launch(
@@ -7239,12 +7261,19 @@ private fun CalendarSyncSection(
                                 Manifest.permission.WRITE_CALENDAR
                             )
                         )
-                    }
+                    },
+                    modifier = Modifier.fillMaxWidth()
                 ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
                     Text("Allow calendar sync")
                 }
             } else {
                 val selected = calendars.firstOrNull { it.id == state.selectedCalendarId }
+                CalendarSyncStatePanel(
+                    title = selected?.displayName ?: "Choose a calendar",
+                    body = if (selected == null) "Pick the calendar that should receive imported and saved shifts." else "${state.shifts.size} saved shift${if (state.shifts.size == 1) "" else "s"} ready to sync."
+                )
                 ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
                     OutlinedTextField(
                         value = selected?.displayName ?: "Choose calendar",
@@ -7266,24 +7295,50 @@ private fun CalendarSyncSection(
                         }
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     Button(
                         onClick = onSyncCalendar,
-                        enabled = state.selectedCalendarId != null && state.shifts.isNotEmpty()
+                        enabled = state.selectedCalendarId != null && state.shifts.isNotEmpty(),
+                        modifier = Modifier.weight(1f)
                     ) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
                         Text("Sync shifts")
                     }
-                    OutlinedButton(onClick = onLoadCalendars) {
+                    OutlinedButton(onClick = onLoadCalendars, modifier = Modifier.weight(1f)) {
                         Text("Refresh")
                     }
                 }
                 if (calendars.isEmpty()) {
-                    Text("No writable calendars found on this phone.", style = MaterialTheme.typography.bodySmall)
+                    CalendarSyncStatePanel(
+                        title = "No writable calendars found",
+                        body = "Refresh after adding a calendar account on this phone."
+                    )
                 }
             }
             message?.let {
-                Text(it, color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.bodySmall)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(it, color = MaterialTheme.colorScheme.onSecondaryContainer, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(10.dp))
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun CalendarSyncStatePanel(title: String, body: String) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.36f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
