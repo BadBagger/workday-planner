@@ -3188,30 +3188,76 @@ private fun NextShiftDashboardCard(
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text("Next shift", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(38.dp)
+                        .height(38.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Next shift", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (nextShift == null) "Schedule setup" else nextShift.date.format(dateFormatter),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             if (nextShift == null) {
-                Text(
-                    if (hasAnySchedule) "No upcoming shift saved." else "Import a schedule screenshot or add your first shift.",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(onClick = onImportSchedule, modifier = Modifier.weight(1f)) { Text("Import") }
-                    OutlinedButton(onClick = onScheduleShortcut, modifier = Modifier.weight(1f)) { Text("Add shift") }
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (hasAnySchedule) "No upcoming shift is saved. Add the next one so Today can line up tasks and reminders." else "Import a schedule screenshot or add a shift to unlock the workday dashboard.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = onImportSchedule, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.FileUpload, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Import")
+                    }
+                    OutlinedButton(onClick = onScheduleShortcut, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Add")
+                    }
                 }
                 return@Column
             }
-            Text(nextShift.label.ifBlank { "Work" }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("${nextShift.start.format(timeFormatter)} - ${nextShift.end.format(timeFormatter)}", style = MaterialTheme.typography.bodyLarge)
-            Text("Starts ${nextShift.timeUntilShift(now)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(nextShift.label.ifBlank { "Work" }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text("${nextShift.start.format(timeFormatter)} - ${nextShift.end.format(timeFormatter)}", style = MaterialTheme.typography.bodyLarge)
+                }
+                AssistChip(
+                    onClick = {},
+                    label = { Text("Starts ${nextShift.timeUntilShift(now)}") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                )
+            }
             listOf(nextShift.location, nextShift.notes)
                 .filter { it.isNotBlank() }
                 .forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             OutlinedButton(onClick = onScheduleShortcut, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Event, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
                 Text("Edit shift")
             }
         }
