@@ -5841,12 +5841,14 @@ private fun TaskDetailScreen(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text(task?.let { "Edit task" } ?: "Add task", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-        OutlinedButton(onClick = ::startVoiceTaskFromEditor, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Mic, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Speak task")
-        }
+        TaskEditorHeaderCard(
+            isEditing = task != null,
+            title = title,
+            category = category,
+            priority = priority,
+            reminderEnabled = reminderEnabled,
+            onSpeakTask = ::startVoiceTaskFromEditor
+        )
         WorkdayAnimatedVisibility(visible = voiceListening) {
             VoiceTaskListeningCard(
                 transcript = voiceTranscript,
@@ -6131,6 +6133,64 @@ private fun TaskDetailScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Save and add another")
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TaskEditorHeaderCard(
+    isEditing: Boolean,
+    title: String,
+    category: TaskCategory,
+    priority: TaskPriority,
+    reminderEnabled: Boolean,
+    onSpeakTask: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(40.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(if (isEditing) "Edit task" else "Add task", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        title.ifBlank { "Capture the work item, then tune timing and rules below." },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(onClick = {}, label = { Text(category.label) })
+                AssistChip(
+                    onClick = {},
+                    label = { Text(priority.label) },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = priority.priorityColor().copy(alpha = 0.16f),
+                        labelColor = priority.priorityColor()
+                    )
+                )
+                AssistChip(onClick = {}, label = { Text(if (reminderEnabled) "Reminder on" else "No reminder") })
+            }
+            Button(onClick = onSpeakTask, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Mic, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Speak task")
             }
         }
     }
