@@ -8013,70 +8013,173 @@ private fun ShiftTemplateChips(
 ) {
     var editorOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<ShiftTemplate?>(null) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("Shift templates", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            TextButton(onClick = {
-                editing = null
-                editorOpen = !editorOpen
-            }) { Text(if (editorOpen) "Hide" else "Create") }
-        }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            templates.filter { it.enabled }.forEach { template ->
-                OutlinedButton(onClick = { onApply(template) }) { Text(template.name) }
-            }
-        }
-        Text("Manage templates", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        templates.forEach { template ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.weight(1f)) {
-                    Text(template.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+    val enabledTemplates = templates.filter { it.enabled }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        modifier = Modifier.fillMaxWidth().animateContentSize()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .width(36.dp)
+                        .height(36.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Shift templates", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Text(
-                        buildList {
-                            add(template.status)
-                            if (template.defaultTasks.isNotEmpty()) add("${template.defaultTasks.size} tasks")
-                            if (template.defaultReminders.isNotEmpty()) add("${template.defaultReminders.size} reminders")
-                            if (!template.enabled) add("Disabled")
-                        }.joinToString(" | "),
+                        "Apply a workday shape with default tasks and reminders already attached.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                if (!template.builtIn) {
-                    TextButton(onClick = {
-                        editing = template
-                        editorOpen = true
-                    }) { Text("Edit") }
+                AssistChip(onClick = {}, label = { Text("${enabledTemplates.size} active") })
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                enabledTemplates.forEach { template ->
+                    ShiftTemplatePill(template = template, onApply = { onApply(template) })
                 }
-                TextButton(onClick = {
-                    onSaveTemplate(
-                        template.copy(
-                            id = java.util.UUID.randomUUID().toString(),
-                            name = "${template.name} copy",
-                            builtIn = false,
-                            enabled = true
-                        )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Manage templates", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                templates.forEach { template ->
+                    ShiftTemplateSavedRow(
+                        template = template,
+                        onApply = { onApply(template) },
+                        onEdit = {
+                            editing = template
+                            editorOpen = true
+                        },
+                        onDuplicate = {
+                            onSaveTemplate(
+                                template.copy(
+                                    id = java.util.UUID.randomUUID().toString(),
+                                    name = "${template.name} copy",
+                                    builtIn = false,
+                                    enabled = true
+                                )
+                            )
+                        },
+                        onToggleEnabled = { onSaveTemplate(template.copy(enabled = !template.enabled)) },
+                        onDelete = { onDeleteTemplate(template.id) }
                     )
-                }) { Text("Duplicate") }
-                if (!template.builtIn) {
-                    TextButton(onClick = { onSaveTemplate(template.copy(enabled = !template.enabled)) }) {
-                        Text(if (template.enabled) "Disable" else "Enable")
+                }
+            }
+            OutlinedButton(
+                onClick = {
+                    editing = null
+                    editorOpen = !editorOpen
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text(if (editorOpen) "Hide template editor" else "Create custom shift template")
+            }
+            if (editorOpen) {
+                ShiftTemplateEditor(
+                    template = editing,
+                    onSave = {
+                        onSaveTemplate(it)
+                        editorOpen = false
+                        editing = null
                     }
-                    TextButton(onClick = { onDeleteTemplate(template.id) }) { Text("Delete") }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShiftTemplatePill(template: ShiftTemplate, onApply: () -> Unit) {
+    val accent = template.shiftTemplateAccent()
+    OutlinedButton(
+        onClick = onApply,
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.45f))
+    ) {
+        Text(template.name, color = accent)
+        if (template.defaultTasks.isNotEmpty() || template.defaultReminders.isNotEmpty()) {
+            Spacer(Modifier.width(6.dp))
+            Text("${template.defaultTasks.size + template.defaultReminders.size}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun ShiftTemplateSavedRow(
+    template: ShiftTemplate,
+    onApply: () -> Unit,
+    onEdit: () -> Unit,
+    onDuplicate: () -> Unit,
+    onToggleEnabled: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val accent = template.shiftTemplateAccent()
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.22f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .width(8.dp)
+                        .height(36.dp)
+                        .background(accent.copy(alpha = if (template.enabled) 0.85f else 0.28f))
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(template.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        template.shiftTemplateSummary(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                AssistChip(onClick = {}, label = { Text(if (template.enabled) "On" else "Off") })
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onApply, enabled = template.enabled) { Text("Use") }
+                OutlinedButton(onClick = onDuplicate) { Text("Copy") }
+                if (!template.builtIn) {
+                    TextButton(onClick = onEdit) { Text("Edit") }
+                    TextButton(onClick = onToggleEnabled) { Text(if (template.enabled) "Disable" else "Enable") }
+                    TextButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, contentDescription = null)
+                    }
                 }
             }
         }
-        if (editorOpen) {
-            ShiftTemplateEditor(
-                template = editing,
-                onSave = {
-                    onSaveTemplate(it)
-                    editorOpen = false
-                    editing = null
-                }
-            )
-        }
     }
+}
+
+@Composable
+private fun ShiftTemplate.shiftTemplateAccent(): Color = when (linkedShiftType) {
+    LinkedShiftType.Opening -> MaterialTheme.colorScheme.warning
+    LinkedShiftType.Closing -> MaterialTheme.colorScheme.success
+    LinkedShiftType.Truck,
+    LinkedShiftType.Inventory -> MaterialTheme.colorScheme.tertiary
+    LinkedShiftType.Training,
+    LinkedShiftType.Manager -> MaterialTheme.colorScheme.secondary
+    LinkedShiftType.Any -> if (kind == ShiftTemplateKind.Work) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    LinkedShiftType.Mid -> MaterialTheme.colorScheme.primary
+}
+
+private fun ShiftTemplate.shiftTemplateSummary(): String {
+    return buildList {
+        add(status)
+        if (kind != ShiftTemplateKind.Work) add(kind.name.lowercase().replaceFirstChar { it.titlecase() })
+        if (defaultTasks.isNotEmpty()) add("${defaultTasks.size} tasks")
+        if (defaultReminders.isNotEmpty()) add("${defaultReminders.size} reminders")
+        if (!enabled) add("Disabled")
+    }.joinToString(" | ")
 }
 
 @Composable
