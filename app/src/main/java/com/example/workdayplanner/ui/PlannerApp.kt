@@ -10110,9 +10110,33 @@ private fun EmptyState(title: String, body: String) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(title, style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(8.dp))
-        Text(body, style = MaterialTheme.typography.bodyMedium)
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                Modifier.padding(18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(42.dp)
+                        .height(42.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text(
+                    body,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 
