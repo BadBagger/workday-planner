@@ -4969,10 +4969,18 @@ private fun ChecklistTemplateRow(
 
 @Composable
 private fun SectionHeader(title: String, subtitle: String? = null) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        subtitle?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .height(if (subtitle == null) 22.dp else 38.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.72f))
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            subtitle?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
