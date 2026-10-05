@@ -225,14 +225,16 @@ object ScheduleTextParser {
 
     private fun shouldWaitForFollowingRoleDate(lines: List<String>, index: Int, rest: String): Boolean {
         if (!timeRangeRegex.containsMatchIn(rest)) return false
-        val nextMeaningfulLine = lines.drop(index + 1)
+        val nextMeaningfulLines = lines.drop(index + 1)
             .map(::normalizeOcrLine)
-            .firstOrNull { !isNoise(it) }
-            ?: return false
+            .filterNot { isNoise(it) }
+            .take(3)
         // Some schedules put the real calendar day on the role row:
         // "Sat 2 PM - 10:30 PM" followed by "18 Deli Clerk".
         // In that case the leading 18 should date the shift, not the 2 PM hour.
-        return roleLineRegex.matches(nextMeaningfulLine) && !offRegex.containsMatchIn(nextMeaningfulLine)
+        return nextMeaningfulLines.any { line ->
+            roleLineRegex.matches(line) && !offRegex.containsMatchIn(line)
+        }
     }
 
     private fun extractDayCardDates(lines: List<String>, baseDate: LocalDate): List<LocalDate> {

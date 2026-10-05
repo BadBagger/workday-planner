@@ -591,6 +591,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         mutableImportState.value = ImportUiState()
     }
 
+    fun dismissImportMessage() {
+        mutableImportState.value = currentImportState().copy(appliedMessage = null)
+    }
+
     fun previewImport(): ParsedSchedule {
         val rawText = currentImportState().rawText
         val parsed = ScheduleTextParser.parse(rawText)

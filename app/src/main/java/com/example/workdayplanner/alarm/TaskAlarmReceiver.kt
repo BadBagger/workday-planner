@@ -43,7 +43,7 @@ class TaskAlarmReceiver : BroadcastReceiver() {
         val builder = NotificationCompat.Builder(context, NotificationHelper.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
-            .setContentText(if (task.alarmDelivery == AlarmDelivery.StandardNotification) "Task reminder." else "Full alarm: this task needs your attention.")
+            .setContentText(if (task.alarmDelivery == AlarmDelivery.StandardNotification) "Task reminder." else "Alarm: this task needs your attention.")
             .setContentIntent(pendingContentIntent)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -52,7 +52,7 @@ class TaskAlarmReceiver : BroadcastReceiver() {
             .setVibrate(longArrayOf(0, 700, 350, 700, 350, 1200))
             .setAutoCancel(true)
         if (task.alarmDelivery != AlarmDelivery.StandardNotification) {
-            val fullScreenIntent = Intent(context, TaskAlarmActivity::class.java)
+            val alarmIntent = Intent(context, TaskAlarmActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 .putExtra(TaskAlarmActivity.EXTRA_ALARM_ID, taskId)
                 .putExtra(TaskAlarmActivity.EXTRA_ALARM_TITLE, title)
@@ -60,13 +60,13 @@ class TaskAlarmReceiver : BroadcastReceiver() {
                 .putExtra(TaskAlarmActivity.EXTRA_ALARM_MESSAGE, "This reminder is ringing because you set an alarm for this task.")
                 .putExtra(TaskAlarmActivity.EXTRA_OPEN_BUTTON_LABEL, "Open task")
                 .putExtra(TaskAlarmActivity.EXTRA_SNOOZE_RECEIVER, TaskAlarmActivity.SNOOZE_TASK)
-            val pendingFullScreenIntent = PendingIntent.getActivity(
+            val pendingAlarmIntent = PendingIntent.getActivity(
                 context,
-                taskId.hashCode() xor FULL_SCREEN_REQUEST_MASK,
-                fullScreenIntent,
+                taskId.hashCode() xor ALARM_SCREEN_REQUEST_MASK,
+                alarmIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            builder.setFullScreenIntent(pendingFullScreenIntent, true)
+            builder.setContentIntent(pendingAlarmIntent)
         }
 
         NotificationManagerCompat.from(context).notify(taskId.hashCode(), builder.build())
@@ -87,6 +87,6 @@ class TaskAlarmReceiver : BroadcastReceiver() {
     companion object {
         const val EXTRA_TASK_ID = "task_id"
         const val EXTRA_TASK_TITLE = "task_title"
-        private const val FULL_SCREEN_REQUEST_MASK = 0x51F7
+        private const val ALARM_SCREEN_REQUEST_MASK = 0x51F7
     }
 }

@@ -343,6 +343,41 @@ class ScheduleTextParserTest {
     }
 
     @Test
+    fun parsesNoisyPublixBlockWithoutTreatingShiftHourAsDate() {
+        val parsed = ScheduleTextParser.parse(
+            """
+            9:35 ve Not II96
+            2o publix.org/passpoi + 64
+            268 MENU
+            Schedule
+            Scheduled Shift Pickup Requests
+            Sat 2 p.m. - 10:30 p.m.
+            18 Deli Clerk
+            Store #1640
+            8 hours
+            Sun
+            19 Not Scheduled
+            Mon 11 a.m. - 7:30 p.m.
+            20 Deli Clerk
+            Store #1640
+            8 hours
+            """.trimIndent(),
+            currentYear = 2026
+        )
+
+        assertEquals(2, parsed.shifts.size)
+        assertEquals(LocalDate.of(2026, 7, 18), parsed.shifts[0].date)
+        assertEquals(LocalTime.of(14, 0), parsed.shifts[0].start)
+        assertEquals(LocalTime.of(22, 30), parsed.shifts[0].end)
+        assertEquals("Deli Clerk", parsed.shifts[0].label)
+        assertEquals("Store #1640", parsed.shifts[0].location)
+        assertTrue(LocalDate.of(2026, 7, 19) in parsed.daysOff)
+        assertEquals(LocalDate.of(2026, 7, 20), parsed.shifts[1].date)
+        assertEquals(LocalTime.of(11, 0), parsed.shifts[1].start)
+        assertEquals(LocalTime.of(19, 30), parsed.shifts[1].end)
+    }
+
+    @Test
     fun parsesCompactWeekdayShift() {
         val parsed = ScheduleTextParser.parse("Mon 8-4", currentYear = 2026)
 

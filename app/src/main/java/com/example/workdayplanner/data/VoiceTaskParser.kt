@@ -405,12 +405,18 @@ object VoiceTaskParser {
     }
 
     private fun cleanTitle(value: String): String {
-        val cleaned = value
+        val normalizedValue = value
+            .replace(Regex("\\ba\\.m\\.(?=\\s|$)", RegexOption.IGNORE_CASE), "AM")
+            .replace(Regex("\\bp\\.m\\.(?=\\s|$)", RegexOption.IGNORE_CASE), "PM")
+        val cleaned = normalizedValue
+            .replace(Regex("\\b(?:due|deadline|by)\\s+at\\s+\\d{1,2}(?::\\d{2})?\\s*(am|pm)?\\b", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\b(?:due|deadline|by)\\s+at\\s+(noon|midnight|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(\\s+(fifteen|thirty|forty five|fourty five))?\\b", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\balarm\\s+at\\s+\\d{1,2}(?::\\d{2})?\\s*(am|pm)?\\b", RegexOption.IGNORE_CASE), "")
             .replace(Regex("\\bat\\s+\\d{1,2}(?::\\d{2})?\\s*(am|pm)?\\b", RegexOption.IGNORE_CASE), "")
             .replace(Regex("\\bat\\s+(noon|midnight|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(\\s+(fifteen|thirty|forty five|fourty five))?\\b", RegexOption.IGNORE_CASE), "")
             .replace(Regex("\\b(today|tomorrow|next\\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\\b", RegexOption.IGNORE_CASE), "")
             .replace(Regex("\\b(after work|after my shift|after shift)\\b", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\bdue\\s*$", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\b(due|deadline|by)\\s*$", RegexOption.IGNORE_CASE), "")
             .split(" ")
             .filter { it.isNotBlank() && it.lowercase(Locale.US) !in fillerWords }
             .joinToString(" ")

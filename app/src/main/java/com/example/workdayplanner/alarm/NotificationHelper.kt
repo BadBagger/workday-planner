@@ -18,7 +18,7 @@ object NotificationHelper {
             "Task alarms",
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Full-screen alarms for work task deadlines and reminders."
+            description = "Alarm notifications for work task deadlines and reminders."
             setSound(
                 Settings.System.DEFAULT_ALARM_ALERT_URI,
                 AudioAttributes.Builder()

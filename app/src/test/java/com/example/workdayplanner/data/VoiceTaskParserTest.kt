@@ -205,6 +205,36 @@ class VoiceTaskParserTest {
     }
 
     @Test
+    fun stripsDueAtTimeFromOrderTitle() {
+        val result = VoiceTaskParser.parse("Produce order due at 3 PM", now, zone)
+
+        assertEquals("Produce order", result.title)
+        assertEquals(LocalDateTime.of(2026, 7, 10, 15, 0), result.dueAt)
+        assertEquals(LocalDateTime.of(2026, 7, 10, 14, 30), result.alarmAt)
+        assertEquals(30, result.reminderOffsetMinutes)
+    }
+
+    @Test
+    fun stripsPlainAtTimeFromOrderTitle() {
+        val result = VoiceTaskParser.parse("Produce order at 3 p.m.", now, zone)
+
+        assertEquals("Produce order", result.title)
+        assertEquals(LocalDateTime.of(2026, 7, 10, 15, 0), result.dueAt)
+        assertEquals(LocalDateTime.of(2026, 7, 10, 14, 30), result.alarmAt)
+        assertEquals(30, result.reminderOffsetMinutes)
+    }
+
+    @Test
+    fun stripsExplicitAlarmTimeFromOrderTitle() {
+        val result = VoiceTaskParser.parse("Produce order due at 7:30 alarm at 7:20", now, zone)
+
+        assertEquals("Produce order", result.title)
+        assertEquals(LocalDateTime.of(2026, 7, 10, 19, 30), result.dueAt)
+        assertEquals(LocalDateTime.of(2026, 7, 10, 19, 20), result.alarmAt)
+        assertEquals(10, result.reminderOffsetMinutes)
+    }
+
+    @Test
     fun keepsCommaListAsOneTask() {
         val result = VoiceTaskParser.parse("Order ham, turkey, and roast beef at 10 AM", now, zone)
 

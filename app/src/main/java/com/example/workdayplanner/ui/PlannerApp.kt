@@ -137,6 +137,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.compose.animation.animateContentSize
+import com.example.workdayplanner.BuildConfig
 import com.example.workdayplanner.PlannerViewModel
 import com.example.workdayplanner.TrainingImportUiState
 import com.example.workdayplanner.alarm.AlarmScheduler
@@ -144,6 +145,7 @@ import com.example.workdayplanner.calendar.DeviceCalendar
 import com.example.workdayplanner.data.AccentStyle
 import com.example.workdayplanner.data.AlarmDelivery
 import com.example.workdayplanner.data.AlarmDispatchStatus
+import com.example.workdayplanner.data.AlarmSchedulingStatus
 import com.example.workdayplanner.data.AlarmSettings
 import com.example.workdayplanner.data.AppearanceMode
 import com.example.workdayplanner.data.AppThemeStyle
@@ -312,7 +314,7 @@ fun PlannerApp(
     val imageMessage by viewModel.imageMessage.collectAsStateWithLifecycle()
     val trainingImportState by viewModel.trainingImportState.collectAsStateWithLifecycle()
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
-    val topLevel = listOf(Screen.Tasks, Screen.Notes, Screen.Schedule, Screen.Manager, Screen.Settings)
+    val topLevel = listOf(Screen.Tasks, Screen.WorkTasks, Screen.Notes, Screen.Schedule, Screen.Manager, Screen.Settings)
     var showPremiumScreen by remember { mutableStateOf(false) }
     var openImportAfterIntro by remember { mutableStateOf(false) }
     val showIntro = !state.onboardingCompleted && !state.hasPlannerData()
@@ -366,6 +368,7 @@ fun PlannerApp(
                     currentRoute == Screen.Import.route -> "Import"
                     showPremiumScreen -> "Premium"
                     currentRoute == Screen.Settings.route -> "Settings"
+                    currentRoute == Screen.WorkTasks.route -> "To-do"
                     currentRoute == Screen.Tasks.route -> "Today"
                     else -> "Workday Planner"
                 }
@@ -400,7 +403,7 @@ fun PlannerApp(
             }
         },
         floatingActionButton = {
-            if (!showIntro && currentRoute == Screen.Tasks.route) {
+            if (!showIntro && currentRoute in setOf(Screen.Tasks.route, Screen.WorkTasks.route)) {
                 VoiceTaskFloatingCapture(
                     state = state,
                     launchRequest = voiceTaskLaunchRequest,
@@ -441,6 +444,8 @@ fun PlannerApp(
             composable(Screen.Tasks.route) {
                 TaskListScreen(
                     state = state,
+                    dashboardOnly = true,
+                    importMessage = importState.appliedMessage?.takeIf { it.startsWith("Added or updated") },
                     onTaskClick = { navController.navigate("${Screen.TaskDetail.route}/${it.id}") },
                     onEventClick = { navController.navigate("${Screen.EventDetail.route}/${it.id}") },
                     onAddTask = { navController.navigate("${Screen.TaskDetail.route}/new") },
@@ -461,6 +466,37 @@ fun PlannerApp(
                     onSaveTimecardEntry = viewModel::saveTimecardEntry,
                     onAddChecklist = viewModel::addChecklistTemplate,
                     onSaveVoiceTask = viewModel::saveTask,
+                    onDismissImportMessage = viewModel::dismissImportMessage,
+                    onOpenPremium = ::openPremium
+                )
+            }
+            composable(Screen.WorkTasks.route) {
+                TaskListScreen(
+                    state = state,
+                    dashboardOnly = false,
+                    showDashboardHeader = false,
+                    importMessage = importState.appliedMessage?.takeIf { it.startsWith("Added or updated") },
+                    onTaskClick = { navController.navigate("${Screen.TaskDetail.route}/${it.id}") },
+                    onEventClick = { navController.navigate("${Screen.EventDetail.route}/${it.id}") },
+                    onAddTask = { navController.navigate("${Screen.TaskDetail.route}/new") },
+                    onAddRepeatingTask = { navController.navigate("${Screen.TaskDetail.route}/new") },
+                    onScheduleShortcut = { navController.navigate(Screen.Schedule.route) },
+                    onImportSchedule = { navController.navigate(Screen.Import.route) },
+                    onOpenNotes = { navController.navigate(Screen.Notes.route) },
+                    onMarkTodayOff = { viewModel.addTypedDayOff(LocalDate.now(), ShiftTemplateKind.DayOff) },
+                    onWeeklyReview = { navController.navigate(Screen.WeeklyReview.route) },
+                    onAddEvent = { navController.navigate("${Screen.EventDetail.route}/new") },
+                    onToggleComplete = viewModel::toggleComplete,
+                    onDelete = viewModel::deleteTask,
+                    onDeleteEvent = viewModel::deleteEvent,
+                    onClockIn = viewModel::clockIn,
+                    onStartLunch = viewModel::startLunch,
+                    onEndLunch = viewModel::endLunch,
+                    onClockOut = viewModel::clockOut,
+                    onSaveTimecardEntry = viewModel::saveTimecardEntry,
+                    onAddChecklist = viewModel::addChecklistTemplate,
+                    onSaveVoiceTask = viewModel::saveTask,
+                    onDismissImportMessage = viewModel::dismissImportMessage,
                     onOpenPremium = ::openPremium
                 )
             }
@@ -735,6 +771,9 @@ private fun VoiceTaskFloatingCapture(
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak one work task")
+                        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3500L)
+                        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+                        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 6000L)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 }
@@ -859,7 +898,18 @@ private fun VoiceTaskFloatingCapture(
                         createdVoiceTasks.forEach { onDeleteTask(it.id) }
                         createdVoiceTasks = emptyList()
                     },
-                    onEdit = { createdVoiceTasks.lastOrNull()?.let(onEditTask) }
+                    onEdit = { createdVoiceTasks.lastOrNull()?.let(onEditTask) },
+                    onAlarmOffsetSelected = { task, minutes ->
+                        task.deadline?.let { due ->
+                            val updated = task.copy(
+                                alarmAt = due.minusMinutes(minutes.toLong()),
+                                alarmOffsetMinutes = minutes.toLong(),
+                                reminderType = ReminderType.FullAlarm,
+                                alarmSchedulingStatus = AlarmSchedulingStatus.NotScheduled
+                            )
+                            createdVoiceTasks = listOf(onSaveTask(updated))
+                        }
+                    }
                 )
                 VoicePanelState.Error -> VoiceTaskErrorCard(message = voiceError.orEmpty(), onRetry = ::startVoiceCapture)
             }
@@ -972,6 +1022,9 @@ private fun AppTopBar(title: String) {
 @Composable
 private fun TaskListScreen(
     state: AppState,
+    dashboardOnly: Boolean = false,
+    showDashboardHeader: Boolean = true,
+    importMessage: String?,
     onTaskClick: (TaskItem) -> Unit,
     onEventClick: (WorkEvent) -> Unit,
     onAddTask: () -> Unit,
@@ -992,6 +1045,7 @@ private fun TaskListScreen(
     onSaveTimecardEntry: (TimecardEntry) -> Unit,
     onAddChecklist: (String) -> Unit,
     onSaveVoiceTask: (TaskItem) -> TaskItem,
+    onDismissImportMessage: () -> Unit,
     onOpenPremium: () -> Unit
 ) {
     val today = LocalDate.now()
@@ -1047,42 +1101,58 @@ private fun TaskListScreen(
         )
         .firstOrNull()
     val events = state.events.sortedBy { it.startsAt }
+    if (dashboardOnly) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(screenPadding),
+            verticalArrangement = Arrangement.spacedBy(sectionGap)
+        ) {
+            item {
+                CommandCenterCard(
+                    state = state,
+                    importMessage = importMessage,
+                    overdueTaskCount = allOverdueCount,
+                    todayTaskCount = allTodayCount,
+                    upcomingAlarmCount = upcomingAlarmCount(state, now),
+                    onAddTask = onAddTask,
+                    onAddRepeatingTask = onAddRepeatingTask,
+                    onScheduleShortcut = onScheduleShortcut,
+                    onImportSchedule = onImportSchedule,
+                    onOpenNotes = onOpenNotes,
+                    onMarkTodayOff = onMarkTodayOff,
+                    onWeeklyReview = onWeeklyReview,
+                    onSaveVoiceTask = onSaveVoiceTask,
+                    onEditVoiceTask = onTaskClick,
+                    onUndoVoiceTask = onDelete,
+                    onDismissImportMessage = onDismissImportMessage
+                )
+            }
+            item {
+                TimecardSection(
+                    state = state,
+                    onClockIn = onClockIn,
+                    onStartLunch = onStartLunch,
+                    onEndLunch = onEndLunch,
+                    onClockOut = onClockOut,
+                    onSaveEntry = onSaveTimecardEntry
+                )
+            }
+        }
+        return
+    }
     if (tasks.isEmpty() && events.isEmpty()) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(screenPadding),
             verticalArrangement = Arrangement.spacedBy(sectionGap)
         ) {
-            CommandCenterCard(
-                state = state,
-                overdueTaskCount = allOverdueCount,
-                todayTaskCount = allTodayCount,
-                upcomingAlarmCount = upcomingAlarmCount(state, now),
+            ToDoPageHeader(
+                todayCount = allTodayCount,
+                overdueCount = allOverdueCount,
+                dueSoonCount = allDueSoonCount,
                 onAddTask = onAddTask,
-                onAddRepeatingTask = onAddRepeatingTask,
-                onScheduleShortcut = onScheduleShortcut,
-                onImportSchedule = onImportSchedule,
-                onOpenNotes = onOpenNotes,
-                onMarkTodayOff = onMarkTodayOff,
-                onWeeklyReview = onWeeklyReview,
-                onSaveVoiceTask = onSaveVoiceTask,
-                onEditVoiceTask = onTaskClick,
-                onUndoVoiceTask = onDelete
-            )
-            TimecardSection(
-                state = state,
-                onClockIn = onClockIn,
-                onStartLunch = onStartLunch,
-                onEndLunch = onEndLunch,
-                onClockOut = onClockOut,
-                onSaveEntry = onSaveTimecardEntry
+                onAddRepeatingTask = onAddRepeatingTask
             )
             ChecklistTemplateSection(onAddChecklist = onAddChecklist)
-            OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Event, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Add meeting or work event")
-            }
-            EmptyState("Nothing planned yet", "Add a task, meeting, or import your work schedule to start building your day.")
+            EmptyState("No work to-dos yet", "Add one-off tasks or build repeating work tasks here. Today stays focused on your shift.")
         }
         return
     }
@@ -1090,9 +1160,10 @@ private fun TaskListScreen(
         modifier = Modifier.fillMaxSize().padding(screenPadding),
         verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
-        item {
+        if (showDashboardHeader) item {
             CommandCenterCard(
                 state = state,
+                importMessage = importMessage,
                 overdueTaskCount = allOverdueCount,
                 todayTaskCount = allTodayCount,
                 upcomingAlarmCount = upcomingAlarmCount(state, now),
@@ -1105,7 +1176,17 @@ private fun TaskListScreen(
                 onWeeklyReview = onWeeklyReview,
                 onSaveVoiceTask = onSaveVoiceTask,
                 onEditVoiceTask = onTaskClick,
-                onUndoVoiceTask = onDelete
+                onUndoVoiceTask = onDelete,
+                onDismissImportMessage = onDismissImportMessage
+            )
+        }
+        if (!showDashboardHeader) item {
+            ToDoPageHeader(
+                todayCount = allTodayCount,
+                overdueCount = allOverdueCount,
+                dueSoonCount = allDueSoonCount,
+                onAddTask = onAddTask,
+                onAddRepeatingTask = onAddRepeatingTask
             )
         }
         item {
@@ -1243,7 +1324,7 @@ private fun TaskListScreen(
             onToggleComplete = onToggleComplete,
             onDelete = onDelete
         )
-        item {
+        if (showDashboardHeader) item {
             TimecardSection(
                 state = state,
                 onClockIn = onClockIn,
@@ -1254,14 +1335,14 @@ private fun TaskListScreen(
             )
         }
         item { ChecklistTemplateSection(onAddChecklist = onAddChecklist) }
-        item {
+        if (showDashboardHeader) item {
             OutlinedButton(onClick = onAddEvent, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Event, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("Add meeting or work event")
             }
         }
-        if (events.isNotEmpty()) {
+        if (showDashboardHeader && events.isNotEmpty()) {
             item { Text("Work events", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
             items(events, key = { it.id }) { event ->
                 EventCard(
@@ -1271,6 +1352,61 @@ private fun TaskListScreen(
                     onDelete = { onDeleteEvent(event.id) }
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ToDoPageHeader(
+    todayCount: Int,
+    overdueCount: Int,
+    dueSoonCount: Int,
+    onAddTask: () -> Unit,
+    onAddRepeatingTask: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Work to-do list", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Plan orders, deadlines, repeating work tasks, and anything that should not clutter Today.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                CompactTaskMetric("Today", todayCount.toString(), Modifier.weight(1f))
+                CompactTaskMetric("Overdue", overdueCount.toString(), Modifier.weight(1f))
+                CompactTaskMetric("Soon", dueSoonCount.toString(), Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onAddTask, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("New task")
+                }
+                OutlinedButton(onClick = onAddRepeatingTask, modifier = Modifier.weight(1f)) {
+                    Text("Repeating")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactTaskMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+        modifier = modifier
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -2046,6 +2182,7 @@ private fun NotesScreen(
 @Composable
 private fun CommandCenterCard(
     state: AppState,
+    importMessage: String?,
     overdueTaskCount: Int,
     todayTaskCount: Int,
     upcomingAlarmCount: Int,
@@ -2058,7 +2195,8 @@ private fun CommandCenterCard(
     onWeeklyReview: () -> Unit,
     onSaveVoiceTask: (TaskItem) -> TaskItem,
     onEditVoiceTask: (TaskItem) -> Unit,
-    onUndoVoiceTask: (String) -> Unit
+    onUndoVoiceTask: (String) -> Unit,
+    onDismissImportMessage: () -> Unit
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
@@ -2134,6 +2272,9 @@ private fun CommandCenterCard(
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak one work task")
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3500L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 6000L)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 }
@@ -2216,6 +2357,13 @@ private fun CommandCenterCard(
             onImportSchedule = onImportSchedule,
             onScheduleShortcut = onScheduleShortcut
         )
+        importMessage?.let {
+            ImportSavedDashboardCard(
+                message = it,
+                onViewSchedule = onScheduleShortcut,
+                onDismiss = onDismissImportMessage
+            )
+        }
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 DashboardStatCard(
@@ -2298,7 +2446,18 @@ private fun CommandCenterCard(
                     onUndoVoiceTask(task.id)
                     createdVoiceTask = null
                 },
-                onEdit = { onEditVoiceTask(task) }
+                onEdit = { onEditVoiceTask(task) },
+                onAlarmOffsetSelected = { existingTask, minutes ->
+                    existingTask.deadline?.let { due ->
+                        val updated = existingTask.copy(
+                            alarmAt = due.minusMinutes(minutes.toLong()),
+                            alarmOffsetMinutes = minutes.toLong(),
+                            reminderType = ReminderType.FullAlarm,
+                            alarmSchedulingStatus = AlarmSchedulingStatus.NotScheduled
+                        )
+                        createdVoiceTask = onSaveVoiceTask(updated)
+                    }
+                }
             )
         }
         SectionHeader("Quick actions")
@@ -2438,6 +2597,46 @@ private fun DashboardStatCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+    }
+}
+
+@Composable
+private fun ImportSavedDashboardCard(
+    message: String,
+    onViewSchedule: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.24f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        "Schedule import saved",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onViewSchedule, modifier = Modifier.weight(1f)) {
+                    Text("View schedule")
+                }
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                    Text("Dismiss")
+                }
+            }
         }
     }
 }
@@ -2884,7 +3083,12 @@ private fun VoiceTaskErrorCard(message: String, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun VoiceTaskConfirmationCard(task: TaskItem, onUndo: () -> Unit, onEdit: () -> Unit) {
+private fun VoiceTaskConfirmationCard(
+    task: TaskItem,
+    onUndo: () -> Unit,
+    onEdit: () -> Unit,
+    onAlarmOffsetSelected: (TaskItem, Int) -> Unit
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.successContainer),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.success.copy(alpha = 0.35f)),
@@ -2897,6 +3101,31 @@ private fun VoiceTaskConfirmationCard(task: TaskItem, onUndo: () -> Unit, onEdit
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSuccessContainer
             )
+            if (task.deadline != null) {
+                Text(
+                    "Quick alarm",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSuccessContainer
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = task.alarmOffsetMinutes == 0L,
+                        onClick = { onAlarmOffsetSelected(task, 0) },
+                        label = { Text("At due time") }
+                    )
+                    FilterChip(
+                        selected = task.alarmOffsetMinutes == 30L,
+                        onClick = { onAlarmOffsetSelected(task, 30) },
+                        label = { Text("30 min before") }
+                    )
+                    FilterChip(
+                        selected = task.alarmOffsetMinutes == 60L,
+                        onClick = { onAlarmOffsetSelected(task, 60) },
+                        label = { Text("1 hr before") }
+                    )
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(onClick = onUndo, modifier = Modifier.weight(1f)) {
                     Text("Undo")
@@ -2926,9 +3155,19 @@ private fun voiceTaskSummary(task: TaskItem): String {
 }
 
 @Composable
-private fun VoiceTaskBatchConfirmationCard(tasks: List<TaskItem>, onUndo: () -> Unit, onEdit: () -> Unit) {
+private fun VoiceTaskBatchConfirmationCard(
+    tasks: List<TaskItem>,
+    onUndo: () -> Unit,
+    onEdit: () -> Unit,
+    onAlarmOffsetSelected: (TaskItem, Int) -> Unit
+) {
     if (tasks.size == 1) {
-        VoiceTaskConfirmationCard(task = tasks.first(), onUndo = onUndo, onEdit = onEdit)
+        VoiceTaskConfirmationCard(
+            task = tasks.first(),
+            onUndo = onUndo,
+            onEdit = onEdit,
+            onAlarmOffsetSelected = onAlarmOffsetSelected
+        )
         return
     }
     Card(
@@ -7188,6 +7427,35 @@ private fun SettingsScreen(
             onTesterModeChanged = onTesterModeChanged,
             onOpenPremium = onOpenPremium
         )
+        AboutBuildSection()
+    }
+}
+
+@Composable
+private fun AboutBuildSection() {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionHeader("About", "Local-first work planning by Smithware Studios.")
+            Text(
+                "Workday Planner ${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "Build ${BuildConfig.VERSION_CODE} • ${BuildConfig.APPLICATION_ID}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "Use this build number when reporting beta import or alarm issues.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -7825,6 +8093,9 @@ private fun ImportScreen(
                     ImportStepHeader("4", "Review detected shifts", "High confidence rows are pre-selected. Needs review rows must be confirmed before saving.")
                     val corrected = reviewRows.toParsedSchedule()
                     Text("${corrected.shifts.size} shifts, ${corrected.daysOff.size} days off confirmed")
+                    if (rawText.hasInlineWeekdayShiftRows()) {
+                        ScheduleImportDateCheckCard()
+                    }
                     Button(
                         onClick = { onApply(corrected) },
                         enabled = corrected.shifts.isNotEmpty() || corrected.daysOff.isNotEmpty(),
@@ -8031,6 +8302,36 @@ private fun WorkShift.importConfidence(): ScheduleImportConfidence {
         label.isBlank() || label == "Work" -> ScheduleImportConfidence.NeedsReview
         location.isBlank() && notes.isBlank() -> ScheduleImportConfidence.NeedsReview
         else -> ScheduleImportConfidence.High
+    }
+}
+
+private fun String.hasInlineWeekdayShiftRows(): Boolean {
+    return lineSequence().any { line ->
+        Regex("""(?i)^\s*(mon|tue|wed|thu|fri|sat|sun)\s+\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?|[ap]\b)""")
+            .containsMatchIn(line)
+    }
+}
+
+@Composable
+private fun ScheduleImportDateCheckCard() {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                "Check the dates before accepting",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Text(
+                "Some schedule rows start with a weekday and shift time, like \"Sat 2 PM.\" Make sure the date field matches the calendar day printed on the next line.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
     }
 }
 
@@ -8424,6 +8725,7 @@ private fun EmptyState(title: String, body: String) {
 
 private sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     data object Tasks : Screen("tasks", "Today", Icons.Default.CheckCircle)
+    data object WorkTasks : Screen("workTasks", "To-do", Icons.Default.CheckCircle)
     data object Notes : Screen("notes", "Notes", Icons.AutoMirrored.Filled.Notes)
     data object Schedule : Screen("schedule", "Schedule", Icons.Default.CalendarMonth)
     data object Manager : Screen("manager", "Manager", Icons.Default.Event)

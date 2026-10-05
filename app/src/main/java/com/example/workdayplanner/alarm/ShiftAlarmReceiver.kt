@@ -10,7 +10,6 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import com.example.workdayplanner.MainActivity
 import com.example.workdayplanner.R
 import com.example.workdayplanner.data.PlannerRepository
 import java.time.format.DateTimeFormatter
@@ -32,15 +31,7 @@ class ShiftAlarmReceiver : BroadcastReceiver() {
         val shiftTitle = intent.getStringExtra(EXTRA_SHIFT_TITLE).orEmpty().ifBlank { shift.label.ifBlank { "Work shift" } }
         val title = "Shift alarm: $shiftTitle"
         val content = "Starts at ${shift.start.format(timeFormatter)}."
-        val contentIntent = Intent(context, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        val pendingContentIntent = PendingIntent.getActivity(
-            context,
-            shiftId.hashCode() xor CONTENT_MASK,
-            contentIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val fullScreenIntent = Intent(context, TaskAlarmActivity::class.java)
+        val alarmIntent = Intent(context, TaskAlarmActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra(TaskAlarmActivity.EXTRA_ALARM_ID, "shift_$shiftId")
             .putExtra(TaskAlarmActivity.EXTRA_ALARM_TITLE, title)
@@ -48,18 +39,17 @@ class ShiftAlarmReceiver : BroadcastReceiver() {
             .putExtra(TaskAlarmActivity.EXTRA_ALARM_MESSAGE, content)
             .putExtra(TaskAlarmActivity.EXTRA_OPEN_BUTTON_LABEL, "Open app")
             .putExtra(TaskAlarmActivity.EXTRA_SNOOZE_RECEIVER, TaskAlarmActivity.SNOOZE_SHIFT)
-        val pendingFullScreenIntent = PendingIntent.getActivity(
+        val pendingAlarmIntent = PendingIntent.getActivity(
             context,
-            shiftId.hashCode() xor FULL_SCREEN_MASK,
-            fullScreenIntent,
+            shiftId.hashCode() xor ALARM_SCREEN_MASK,
+            alarmIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(context, NotificationHelper.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(content)
-            .setContentIntent(pendingContentIntent)
-            .setFullScreenIntent(pendingFullScreenIntent, true)
+            .setContentIntent(pendingAlarmIntent)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -74,8 +64,7 @@ class ShiftAlarmReceiver : BroadcastReceiver() {
     companion object {
         const val EXTRA_SHIFT_ID = "shift_id"
         const val EXTRA_SHIFT_TITLE = "shift_title"
-        private const val CONTENT_MASK = 0x4417
-        private const val FULL_SCREEN_MASK = 0x7717
+        private const val ALARM_SCREEN_MASK = 0x7717
         private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm a")
     }
 }

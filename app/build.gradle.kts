@@ -20,8 +20,8 @@ android {
         applicationId = "com.smithware.workdayplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 69
-        versionName = "2.49-play-beta-import-hotfix"
+        versionCode = 70
+        versionName = "2.50-fullscreen-policy-fix"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
