@@ -7659,9 +7659,31 @@ private fun AddShiftCard(
     var selectedTemplate by remember { mutableStateOf<ShiftTemplate?>(null) }
     var startsAt by remember { mutableStateOf(LocalDate.now().atTime(9, 0)) }
     var endsAt by remember { mutableStateOf(startsAt.plusHours(8)) }
-    Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
+        modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220))
+    ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Add shift", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(40.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Add shift", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        selectedTemplate?.let { "${it.name} template selected" } ?: "Choose a template or enter a custom shift.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             ShiftTemplateChips(
                 templates = templates,
                 onApply = { template ->
@@ -7682,6 +7704,9 @@ private fun AddShiftCard(
                 onSaveTemplate = onSaveTemplate,
                 onDeleteTemplate = onDeleteTemplate
             )
+            selectedTemplate?.let { template ->
+                AddShiftTemplateSummary(template)
+            }
             OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Role/title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = location, onValueChange = { location = it }, label = { Text("Location") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             DateTimeRow("Starts", startsAt, onChanged = {
@@ -7706,9 +7731,37 @@ private fun AddShiftCard(
                         onSave(shift, selectedTemplate)
                     },
                     modifier = Modifier.weight(1f)
-                ) { Text("Save shift") }
-                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("Cancel") }
+                ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Save shift")
+                }
+                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
+                    Text("Cancel")
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun AddShiftTemplateSummary(template: ShiftTemplate) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.36f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(template.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                buildList {
+                    add("${template.start.format(timeFormatter)} - ${template.end.format(timeFormatter)}")
+                    if (template.defaultTasks.isNotEmpty()) add("${template.defaultTasks.size} tasks")
+                    if (template.defaultReminders.isNotEmpty()) add("${template.defaultReminders.size} reminders")
+                }.joinToString(" | "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
