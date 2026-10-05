@@ -5144,27 +5144,44 @@ private fun DailyNotesSection(
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SectionHeader("Work notes", "Shift handoffs, orders, training, reminders, and pay/timecard notes.")
-            Text(
-                "General voice notes and personal notes belong in NotePilot. Keep this area focused on work records.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(40.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Work notes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Capture shift handoffs, orders, training, reminders, and pay notes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                AssistChip(onClick = {}, label = { Text("${todayNotes.size + recentNotes.size}") })
+            }
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Keep this focused on work records. General voice notes and personal notes belong in NotePilot.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(10.dp)
+                )
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 workNoteKinds.forEach { kind ->
                     FilterChip(selected = noteKind == kind, onClick = { noteKind = kind }, label = { Text(kind.label) })
                 }
             }
-            Text("Work voice capture", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Use this for orders, shift notes, handoffs, tasks, truck, inventory, and reminders only.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text("Voice capture type", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 WorkVoiceCaptureType.entries.forEach { type ->
                     FilterChip(
@@ -5191,7 +5208,11 @@ private fun DailyNotesSection(
                         noteText = WorkNoteTemplates.managerHandoff
                     },
                     modifier = Modifier.weight(1f)
-                ) { Text("Handoff template") }
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Handoff")
+                }
                 OutlinedButton(
                     onClick = {
                         noteKind = WorkNoteKind.OrderNote
@@ -5199,7 +5220,11 @@ private fun DailyNotesSection(
                         noteText = WorkNoteTemplates.orderNote
                     },
                     modifier = Modifier.weight(1f)
-                ) { Text("Order template") }
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Order")
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 if (listening) {
