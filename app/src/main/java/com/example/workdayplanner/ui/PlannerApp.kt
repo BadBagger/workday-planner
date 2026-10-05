@@ -6285,58 +6285,145 @@ private fun TaskTemplateChips(
 ) {
     var editorOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<TaskTemplate?>(null) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("Task templates", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            TextButton(onClick = {
-                if (!premiumUnlocked) {
-                    onOpenPremium()
-                    return@TextButton
+    val customTemplates = templates.filterNot { it.builtIn }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        modifier = Modifier.fillMaxWidth().animateContentSize()
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .width(36.dp)
+                        .height(36.dp)
+                        .background(MaterialTheme.colorScheme.secondaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
                 }
-                editing = null
-                editorOpen = !editorOpen
-            }) { Text(if (editorOpen) "Hide" else "Create") }
-        }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            templates.forEach { template ->
-                OutlinedButton(onClick = { onApply(template) }) {
-                    Text(template.name)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Task templates", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Start common deli and work routines without rebuilding the details.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                AssistChip(onClick = {}, label = { Text("${templates.size}") })
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                templates.forEach { template ->
+                    TaskTemplatePill(template = template, onApply = { onApply(template) })
                 }
             }
-        }
-        if (!premiumUnlocked) {
-            PremiumLockedInline(PremiumFeature.TaskTemplates, "Built-in task templates are free. Premium unlocks custom template creation and editing.", onOpenPremium)
-        }
-        if (!premiumUnlocked && templates.any { !it.builtIn }) {
-            Text(
-                "Saved custom templates stay visible. Premium is needed to edit or create more.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        templates.filterNot { it.builtIn }.forEach { template ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(template.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                TextButton(onClick = {
-                    if (premiumUnlocked) {
-                        editing = template
-                        editorOpen = true
-                    } else {
-                        onOpenPremium()
+            if (!premiumUnlocked) {
+                PremiumLockedInline(PremiumFeature.TaskTemplates, "Built-in task templates are free. Premium unlocks custom template creation and editing.", onOpenPremium)
+            }
+            if (!premiumUnlocked && customTemplates.isNotEmpty()) {
+                Text(
+                    "Saved custom templates stay visible. Premium is needed to edit or create more.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (customTemplates.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Saved custom templates", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    customTemplates.forEach { template ->
+                        TaskTemplateSavedRow(
+                            template = template,
+                            onApply = { onApply(template) },
+                            onEdit = {
+                                if (premiumUnlocked) {
+                                    editing = template
+                                    editorOpen = true
+                                } else {
+                                    onOpenPremium()
+                                }
+                            },
+                            onDelete = { onDeleteTemplate(template.id) }
+                        )
                     }
-                }) { Text("Edit") }
-                TextButton(onClick = { onDeleteTemplate(template.id) }) { Text("Delete") }
+                }
+            }
+            OutlinedButton(
+                onClick = {
+                    if (!premiumUnlocked) {
+                        onOpenPremium()
+                        return@OutlinedButton
+                    }
+                    editing = null
+                    editorOpen = !editorOpen
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text(if (editorOpen) "Hide template editor" else "Create custom template")
+            }
+            if (editorOpen) {
+                TaskTemplateEditor(
+                    template = editing,
+                    onSave = {
+                        onSaveTemplate(it)
+                        editorOpen = false
+                        editing = null
+                    }
+                )
             }
         }
-        if (editorOpen) {
-            TaskTemplateEditor(
-                template = editing,
-                onSave = {
-                    onSaveTemplate(it)
-                    editorOpen = false
-                    editing = null
+    }
+}
+
+@Composable
+private fun TaskTemplatePill(template: TaskTemplate, onApply: () -> Unit) {
+    val accent = template.category.categoryColor()
+    OutlinedButton(
+        onClick = onApply,
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.45f))
+    ) {
+        Text(template.name, color = accent)
+        if (template.priority >= TaskPriority.High) {
+            Spacer(Modifier.width(6.dp))
+            Text("!", color = template.priority.priorityColor(), fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun TaskTemplateSavedRow(
+    template: TaskTemplate,
+    onApply: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(template.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        template.title,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
-            )
+                AssistChip(onClick = {}, label = { Text(template.category.label) })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onApply, modifier = Modifier.weight(1f)) { Text("Use") }
+                OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f)) { Text("Edit") }
+                TextButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = null)
+                }
+            }
         }
     }
 }
