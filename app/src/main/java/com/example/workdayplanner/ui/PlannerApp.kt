@@ -1807,11 +1807,7 @@ private fun DeliStandardsCard(
                 missCount = missCount,
                 savedToday = savedToday
             )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { onAddChecklist("deli_daily_standards") }) { Text("Add daily tasks") }
-                OutlinedButton(onClick = { onAddChecklist("deli_working_agreements") }) { Text("Agreements") }
-                OutlinedButton(onClick = { onAddChecklist("deli_two_week_tracker") }) { Text("Tracker task") }
-            }
+            DeliChecklistActions(onAddChecklist = onAddChecklist)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("Daily", "Tracker").forEach { option ->
                     FilterChip(
@@ -1900,6 +1896,82 @@ private fun DeliStandardsHeader(
 }
 
 @Composable
+private fun DeliChecklistActions(onAddChecklist: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "Quick build",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        DeliChecklistAction(
+            title = "Daily standards",
+            subtitle = "Add the full open, production, cleaning, break, and stocking routine.",
+            icon = Icons.Default.Add,
+            actionLabel = "Add",
+            onClick = { onAddChecklist("deli_daily_standards") }
+        )
+        DeliChecklistAction(
+            title = "Working agreements",
+            subtitle = "Turn the team agreements into follow-up tasks for the shift.",
+            icon = Icons.Default.CheckCircle,
+            actionLabel = "Add",
+            onClick = { onAddChecklist("deli_working_agreements") }
+        )
+        DeliChecklistAction(
+            title = "Two-week tracker",
+            subtitle = "Create a reminder task to keep the standards tracker current.",
+            icon = Icons.Default.Event,
+            actionLabel = "Add",
+            onClick = { onAddChecklist("deli_two_week_tracker") }
+        )
+    }
+}
+
+@Composable
+private fun DeliChecklistAction(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    actionLabel: String,
+    onClick: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(36.dp)
+                    .height(36.dp)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Button(onClick = onClick) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text(actionLabel)
+            }
+        }
+    }
+}
+
+@Composable
 private fun DeliDailySheetSection(
     managerOnOpen: String,
     onManagerOnOpen: (String) -> Unit,
@@ -1923,20 +1995,20 @@ private fun DeliDailySheetSection(
     onNotes: (String) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
                 value = managerOnOpen,
                 onValueChange = onManagerOnOpen,
                 label = { Text("Open manager") },
                 singleLine = true,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
                 value = managerOnClose,
                 onValueChange = onManagerOnClose,
                 label = { Text("Close manager") },
                 singleLine = true,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.fillMaxWidth()
             )
         }
         DeliPanel(title = "Daily objectives", subtitle = "Tap Y or N as each line is verified.") {
